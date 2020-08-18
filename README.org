@@ -1,0 +1,30 @@
+#+TITLE: Project Metarosetta
+
+* Summary
+** What
+An interconnectivity framework enabling in-context definition and implicit deployment of semantic textual protocols.
+
+Simply put, it makes it trivial to transform human textual input into a machine-digestible API endpoint by defining contextual translation expressions.
+** Why
+Machines work great together. A new file on a file server triggering a new message on a messaging platform triggers a new task in a task manager. All instantly, working consistently each and every time.
+
+But us humans, we don't broadcast triggers to the services we use. We share information, and within that information something can be actionable. To us, a trigger is merely part of information semantics.
+
+The purpose of this project is to facilitate mechanisms designed to extract these semantics and automatically, and consistently, produce machine-readable interfaces.
+
+So a human writing a note about a task to do in his text editor could trigger a new entry within a to-do app which, in turn, could trigger something else, like updating a shared calendar or broadcasting a status update.
+** How
+
+*** Why not AI/NLP
+* Roadmap
+** The Metalanguage
+*** The Syntax
+*** The Grammar
+*** The Vocabulary
+** Org Contexts
+** Slack Contexts
+** Agnostic Textual Contexts
+* Architecture
+** The Metalanguage
+** The Metaparser
+** Textual Contexts
