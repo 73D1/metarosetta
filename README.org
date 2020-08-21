@@ -4,15 +4,17 @@
 ** What
 An interconnectivity framework enabling in-context definition and implicit deployment of semantic textual protocols.
 
-Simply put, it makes it trivial to transform human textual input into a machine-digestible API endpoint by defining contextual translation expressions.
+Simply put, it makes it trivial to transform human-readable textual input into a machine-digestible API endpoint by defining contextual translation expressions.
 ** Why
-Machines work great together. A new file on a file server triggering a new message on a messaging platform triggers a new task in a task manager. All instantly, working consistently each and every time.
+The only truly universal communication protocol is plain text.
 
-But us humans, we don't broadcast triggers to the services we use. We share information, and within that information something can be actionable. To us, a trigger is merely part of information semantics.
+The most basic form of a connected application is plain text output. Things like Slack notifications for task updates or document changes. While much more common than a public API, unlike structured APIs, human-readable messages are much less actionable from an automation perspective. All the information is being transmitted, but making it machine-digestible for a specific purpose is a non-trivial task.
+
+In addition, there are cases where an application has a public API, but of little use if the endpoints do not match the semantics of an automation. Imagine having a webhook for all new tasks of a specific project, while building an automation for logging all tasks of a specific priority, context or tag, regardless of project.
+
+And finally, us humans only produce plain text in our everyday communication. Having human-written input as a semantic trigger can enable all sorts of powerful workflows.
 
 The purpose of this project is to facilitate mechanisms designed to extract these semantics and automatically, and consistently, produce machine-readable interfaces.
-
-So a human writing a note about a task to do in his text editor could trigger a new entry within a to-do app which, in turn, could trigger something else, like updating a shared calendar or broadcasting a status update.
 ** How
 
 *** Why not AI/NLP
