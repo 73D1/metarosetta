@@ -10,7 +10,7 @@ The only truly universal communication protocol is plain text.
 
 The most basic form of a connected application is plain text output. Things like Slack notifications for task updates or document changes. While much more common than a public API, unlike structured APIs, human-readable messages are much less actionable from an automation perspective. All the information is being transmitted, but making it machine-digestible for a specific purpose is a non-trivial task.
 
-In addition, there are cases where an application has a public API, but of little use if the endpoints do not match the semantics of an automation. Imagine having a webhook for all new tasks of a specific project, while building an automation for logging all tasks of a specific priority, context or tag, regardless of project.
+In addition, there are cases where an application has a public API, but of little use if the endpoints do not match the semantics of an automation. Imagine having a webhook for all new tasks of a specific project, while building an automation for logging all tasks of a specific priority, context or tag, regardless of project. Having a semantic trigger on *all* application updates in plain text makes it possible to design workflows around practical patterns rather than API constraints.
 
 And finally, us humans only produce plain text in our everyday communication. Having human-written input as a semantic trigger can enable all sorts of powerful workflows.
 
