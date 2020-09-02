@@ -1,5 +1,189 @@
 #+TITLE: Project Metarosetta Emacs Package
 
 * The Metalanguage
-* The Metaparser
-* Org Context
+The metalanguage specification and parser.
+
+** The Specification
+
+** The Expression
+An entity defining a particular expression. Using the metalanguage syntax as input, it constructs all underlying logic to parse textual input and structures to map semantic information to machine-readable output.
+
+Designed as an inherently recursive fractal object.
+
+*** Properties
+All the properties contained within the expression object. These are of course defined as slots.
+
+**** Definition
+The metalanguage-specified definition of the expression in context.
+
+This is stored as a quoted lisp list.
+
+#+BEGIN_SRC emacs-lisp
+(mldefinition
+ :initarg :mldefinition
+ :initform (error "Cannot create an expression without a definition!")
+ :type list
+ :documentation "The metalanguage-specified definition of the expression in context."
+ :reader mrosetta-mldefinition)
+#+END_SRC
+**** Regular Expression Properties
+This section contains all the properties pertaining to the encompassing expression's regex, its group key and resulting value of the current input, if processed.
+
+***** Regex Keychain
+In order to properly parse and distribute regex matches across the fractal expression tree, each expression object needs to have a number identifier unique to the encompassing tree.
+
+To manage this, each tree has a single /keychain/ instance shared across all expression objects within a single fractal tree.
+
+#+BEGIN_SRC emacs-lisp
+(rkeychain
+ :initarg :rkeychain
+ :initform (mrosetta-keychain)
+ :type mrosetta-keychain
+ :documentation "The regex keychain instance managing keys for the encompassing expression tree."
+ :reader mrosetta-rkeychain)
+#+END_SRC
+
+****** The Keychain
+Key management is encapsulated within a simple keychain class which holds all generated keys, their respective assignments and is of course capable of generating keys unique within a single instance of the keychain object.
+
+******* Class Definition
+The class itself is designed as a no-argument constructor as the key generator is automatically initialized upon creation.
+
+#+BEGIN_SRC emacs-lisp
+(defclass mrosetta-keychain ()
+  ((lastkey
+    :initform '0
+    :type number
+    :documentation "The last key generated and assigned to a group within the context of a single instance."
+    :reader mrosetta-lastkey)
+   (keys
+    :initform '()
+    :type list
+    :documentation "A property list containing all the generated keys and corresponding references of respectively assigned objects."
+    :reader mrosetta-keys))
+  "A regex group key generator and manager.")
+#+END_SRC
+******* Behavior
+This section covers all defined behavior for the keychain class.
+
+******** Generate Key
+Register for a new key with a particular expression instance.
+
+#+BEGIN_SRC emacs-lisp
+(cl-defmethod mrosetta-generate-rkey ((keychain mrosetta-keychain) mlexpression)
+  "Register for a new key with a particular expression instance within a provided keychain."
+  (let ((key (+ 1 (slot-value keychain 'lastkey))))
+    (setf (slot-value keychain 'keys) (plist-put (slot-value keychain 'keys) key mlexpression))
+    (setf (slot-value keychain 'lastkey) key)))
+#+END_SRC
+***** Regex Keys
+The regex group keys awarded to the encompassing expression instance within the overall fractal tree.
+
+****** Match Key
+The key of the match itself.
+
+#+BEGIN_SRC emacs-lisp
+(rkey
+ :type number
+ :documentation "The regex group key of the expression instance's match."
+ :reader mrosetta-rkey)
+#+END_SRC
+****** Contextual Keys
+Keys matching contextual text surrounding the match.
+
+In addition to extracting structured semantic information from human-readable text, this enables a reverse process where human-readable text is edited and updated based on structured semantic input.
+
+****** Left Context Key
+The key matching all contextual text occurring before the match.
+
+#+BEGIN_SRC emacs-lisp
+(contextual-left-rkey
+ :type number
+ :documentation "The regex group key of the expression instance's preceding context."
+ :reader mrosetta-contextual-left-rkey)
+#+END_SRC
+****** Right Context Key
+The key matching all contextual text occurring after the match.
+
+#+BEGIN_SRC emacs-lisp
+(contextual-right-rkey
+ :type number
+ :documentation "The regex group key of the expression instance's succeeding context."
+ :reader mrosetta-contextual-right-rkey)
+#+END_SRC
+***** Regular Expression
+The compiled regular expression of the expression in context.
+
+This is the regex used under the hood when parsing through human-readable input.
+
+#+BEGIN_SRC emacs-lisp
+(regex
+ :type string
+ :documentation "The compiled regular expression of the expression in context."
+ :reader mrosetta-regex)
+#+END_SRC
+***** Regex Matches
+If input is processed, these properties contain regular expression matches of the encompassing expression instance.
+
+****** The Match
+This property contains the raw textual match.
+
+#+BEGIN_SRC emacs-lisp
+(rmatch
+ :type string
+ :documentation "The raw textual match of the encompasssing expression instance for the currently set input."
+ :reader mrosetta-rmatch)
+#+END_SRC
+****** Left Contextual Match
+All contextual text occurring before the match.
+
+#+BEGIN_SRC emacs-lisp
+(contextual-left-rmatch
+ :type string
+ :documentation "The raw textual left context of the encompassing expression instance for the currently set input."
+ :reader mrosetta-contextual-left-rmatch)
+#+END_SRC
+****** Right Contextual Match
+All contextual text occurring after the match.
+
+#+BEGIN_SRC emacs-lisp
+(contextual-right-rmatch
+ :type string
+ :documentation "The raw textual right context of the encompassing expression instance for the currently set input."
+ :reader mrosetta-contextual-right-rmatch)
+#+END_SRC
+**** Current Input
+
+**** Key
+The property key to which the expression output is assigned, if the expression itself is denoted as such.
+
+#+BEGIN_SRC emacs-lisp
+(key
+ :type string
+ :documentation "The property key to which the expression output is assigned, if any."
+ :reader mrosetta-key)
+#+END_SRC
+**** Value
+
+**** Specifier Properties
+***** Uppercase
+***** Capitalized
+***** Content
+**** Modifier Properties
+***** Uppercase
+***** Lowercase
+**** Plurality
+**** Optionality
+**** Assignment
+*** Class Definition
+The /expression/ class is defined as a standard EIEIO class.
+
+#+BEGIN_SRC emacs-lisp
+(defclass mrosetta-expression ()
+  (())
+  "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
+#+END_SRC
+* Contexts
+** Org
+* Connectors
+** Coda
