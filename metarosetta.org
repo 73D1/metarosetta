@@ -26,8 +26,42 @@ This is stored as a quoted lisp list.
  :documentation "The metalanguage-specified definition of the expression in context."
  :reader mrosetta-mldefinition)
 #+END_SRC
+**** Expression Type
+Specifies the exact type of the expression in context.
+
+The property itself is a ~symbol~ indicating the type of the expression.
+
+#+BEGIN_SRC emacs-lisp
+(extype
+ :type symbol
+ :documentation "A symbol specifying the type of the encompassing expression instance. Can be either a :quote, :context, :word or :fractal."
+ :reader mrosetta-extype)
+#+END_SRC
+
+The following are the possible expression types:
+
+***** Static Quote
+Denotes the simplest expression defining statically quoted text which matches itself within any passed input.
+
+The quote expression type is specified as a ~:quote~.
+***** Variable Context
+Defines variable context consisting of semantically insignificant text. While this text is unimportant for structured semantics, it remains an intrinsic part of the human-readable form.
+
+These expressions are key in the ability to regenerate the human-readable text with updated semantic information from a machine-generated source. This enables true two-way trans-operability between the human and machine forms.
+
+This type of expression is specified as ~:context~.
+***** Matching Word
+An expression matching semantically significant information.
+
+A word expression is specified as a ~:word~.
+***** Fractal
+These are complex expressions consisting of one or more expressions within. Unless the entirety of the input text can be described with a single word expression, the /root/ expression is always a fractal.
+
+In addition, fractals *never* have end values, but can have keys assigned to them matching the fractal-subtree structure contained within.
+
+Such an expression is specified as a ~:fractal~.
 **** Fractals
-All the fractal elements existing within the encompassing expression instance.
+All the fractal elements existing within the encompassing expression instance. Only fractal expression types can contain fractals themselves.
 
 The property itself is a list of ~mrosetta-expression~ instances.
 
@@ -88,40 +122,14 @@ Register for a new key with a particular expression instance.
     (setf (slot-value keychain 'keys) (plist-put (slot-value keychain 'keys) key mlexpression))
     (setf (slot-value keychain 'lastkey) key)))
 #+END_SRC
-***** Regex Keys
-The regex group keys awarded to the encompassing expression instance.
-
-****** Match Key
-The key of the match itself.
+***** Regex Key
+The regex group key awarded to the encompassing expression instance.
 
 #+BEGIN_SRC emacs-lisp
 (rkey
  :type number
- :documentation "The regex group key of the match for the encompassing expression instance."
+ :documentation "The regex matching group key for the encompassing expression instance."
  :reader mrosetta-rkey)
-#+END_SRC
-****** Contextual Keys
-Keys matching contextual text surrounding the match.
-
-In addition to extracting structured semantic information from human-readable text, this enables a reverse process where human-readable text is edited and updated based on structured machine input.
-
-******* Left Context Key
-The key matching all contextual text before the match.
-
-#+BEGIN_SRC emacs-lisp
-(contextual-left-rkey
- :type number
- :documentation "The regex group key matching all contextual text preceding the match for the encompassing expression instance."
- :reader mrosetta-contextual-left-rkey)
-#+END_SRC
-******* Right Context Key
-The key matching all contextual text after the match.
-
-#+BEGIN_SRC emacs-lisp
-(contextual-right-rkey
- :type number
- :documentation "The regex group key matching all contextual text succeeding the match for the encompassing expression instance."
- :reader mrosetta-contextual-right-rkey)
 #+END_SRC
 ***** Regular Expression
 The compiled regular expression of the expression in context.
@@ -134,35 +142,16 @@ This is the regex used under the hood when parsing through human-readable input.
  :documentation "The compiled regular expression of the expression in context."
  :reader mrosetta-regex)
 #+END_SRC
-***** Regex Matches
-If input is processed, these properties contain regular expression matches for the encompassing expression instance.
+***** Regex Match
+If input is processed, this property contains the regular expression match for the encompassing expression instance.
 
-****** The Match
-This property contains the raw textual match.
+The match is in raw text form.
 
 #+BEGIN_SRC emacs-lisp
 (rmatch
  :type string
  :documentation "The textual match of the encompassing expression within the currently set input."
  :reader mrosetta-rmatch)
-#+END_SRC
-****** Left Contextual Match
-All contextual text occurring before the match.
-
-#+BEGIN_SRC emacs-lisp
-(contextual-left-rmatch
- :type string
- :documentation "The textual context preceding the match of the encompassing expression within the currently set input."
- :reader mrosetta-contextual-left-rmatch)
-#+END_SRC
-****** Right Contextual Match
-All contextual text occurring after the match.
-
-#+BEGIN_SRC emacs-lisp
-(contextual-right-rmatch
- :type string
- :documentation "The textual context succeeding the match of the encompassing expression within the currently set input."
- :reader mrosetta-contextual-right-rmatch)
 #+END_SRC
 **** Key
 The property key to which the expression output value is assigned, if the expression itself is denoted as such.
