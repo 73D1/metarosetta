@@ -174,9 +174,59 @@ The property itself is either a string representation of the singular value, or 
  :reader mrosetta-value)
 #+END_SRC
 **** Specifier Properties
+All specifier parameters defined for the encompassing expression instance.
+
 ***** Uppercase
+Match only uppercase words.
+
+#+BEGIN_SRC emacs-lisp
+(is-upparcase
+ :initform 'nil
+ :documentation "Specifies whether the encompassing expression matches only uppercase words. Either non-nil or nil."
+ :reader mrosetta-is-uppercase)
+#+END_SRC
 ***** Capitalized
+Match only capitalized words.
+
+#+BEGIN_SRC emacs-lisp
+(is-capitalized
+ :initform 'nil
+ :documentation "Specifies whether the encompassing expression matches only capitalized words. Either non-nil or nil."
+ :reader mrosetta-is-capitalized)
+#+END_SRC
 ***** Content
+Match only words containing specific characters or substrings.
+
+#+BEGIN_SRC emacs-lisp
+(match-substring
+ :initform 'nil
+ :type (or null string)
+ :documentation "Specifies a specific substring all possible expression matches should contain, if any. Either a string or nil."
+ :reader mrosetta-match-substring)
+#+END_SRC
+**** Boundary Properties
+Specifies whether the match of the encompassing expression has static left or right boundaries.
+
+***** Left Boundary
+Specifies a statically set match prefix, if the expression defines one.
+
+#+BEGIN_SRC emacs-lisp
+(match-prefix
+ :initform 'nil
+ :type (or null string)
+ :documentation "Specifies the prefix all possible expression matches should have, if any. Either a string or nil."
+ :reader mrosetta-match-prefix)
+#+END_SRC
+***** Right Boundary
+Specifies a statically set match suffix, if the expression defines one.
+
+#+BEGIN_SRC emacs-lisp
+(match-suffix
+ :initform 'nil
+ :type (or null string)
+ :documentation "Specifies the suffix all possible expression matches should have, if any. Either a string or nil."
+ :reader mrosetta-match-suffix)
+#+END_SRC
 **** Modifier Properties
 ***** Uppercase
 ***** Lowercase
