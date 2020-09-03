@@ -204,10 +204,10 @@ Match only words containing specific characters or substrings.
  :documentation "Specifies a specific substring all possible expression matches should contain, if any. Either a string or nil."
  :reader mrosetta-match-substring)
 #+END_SRC
-**** Boundary Properties
+***** Boundary Properties
 Specifies whether the match of the encompassing expression has static left or right boundaries.
 
-***** Left Boundary
+****** Left Boundary
 Specifies a statically set match prefix, if the expression defines one.
 
 #+BEGIN_SRC emacs-lisp
@@ -217,7 +217,7 @@ Specifies a statically set match prefix, if the expression defines one.
  :documentation "Specifies the prefix all possible expression matches should have, if any. Either a string or nil."
  :reader mrosetta-match-prefix)
 #+END_SRC
-***** Right Boundary
+****** Right Boundary
 Specifies a statically set match suffix, if the expression defines one.
 
 #+BEGIN_SRC emacs-lisp
@@ -228,11 +228,55 @@ Specifies a statically set match suffix, if the expression defines one.
  :reader mrosetta-match-suffix)
 #+END_SRC
 **** Modifier Properties
+Modifier properties defined for the encompassing expression instance.
+
+Modifiers are useful when matched text needs to be formatted and /normalized/ before being structured within the machine-digestible output.
+
 ***** Uppercase
+Indicates whether matched text needs to be uppercased.
+
+#+BEGIN_SRC emacs-lisp
+(should-uppercase
+ :initform 'nil
+ :documentation "Specifies whether the original encompassing expression match should get uppercased."
+ :reader mrosetta-should-uppercase)
+#+END_SRC
 ***** Lowercase
+Indicates whether matched text needs to be lowercased.
+
+#+BEGIN_SRC emacs-lisp
+(should-lowercase
+ :initform 'nil
+ :documentation "Specifies whether the original encompassing expression match should get lowercased."
+ :reader mrosetta-should-lowercase)
+#+END_SRC
 **** Plurality
+If the expression defines a plural match, then the ~value~ property is in list form and this property is non-nil.
+
+#+BEGIN_SRC emacs-lisp
+(has-plural-value
+ :initform 'nil
+ :documentation "Specifies whether the encompassing expression matches plural values or just a single one. Either nil or non-nil."
+ :reader mrosetta-has-plural-value)
+#+END_SRC
 **** Optionality
+Specifies whether the entire expression and its fractals within (if any) are optional in presence.
+
+#+BEGIN_SRC emacs-lisp
+(is-optional
+ :initform 'nil
+ :documentation "Specifies whether the encompassing expression is optional to match within input text. Either non-nil or nil."
+ :reader mrosetta-is-optional)
+#+END_SRC
 **** Assignment
+Specifies whether the encompassing expression is assigned a specific key to include within the output structure.
+
+#+BEGIN_SRC emacs-lisp
+(has-key
+ :initform 'nil
+ :documentation "Specifies whether the encompassing expression is assigned a key for its output. Either nil or non-nil."
+ :reader mrosetta-has-key)
+#+END_SRC
 *** Class Definition
 The /expression/ class is defined as a standard EIEIO class.
 
