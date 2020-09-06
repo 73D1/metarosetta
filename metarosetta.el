@@ -33,7 +33,7 @@
     (setf (slot-value keychain 'keys) (plist-put (slot-value keychain 'keys) key mlexpression))
     (setf (slot-value keychain 'lastkey) key)))
 
-(defclass mrosetta-expression ()
+(defclass mrosetta-mlexpression ()
   (
    (mldefinition
     :initarg :mldefinition
@@ -43,7 +43,7 @@
     :reader mrosetta-mldefinition)
    (extype
     :type symbol
-    :documentation "A symbol specifying the type of the encompassing expression instance. Can be either a :quote, :context, :word or :fractal."
+    :documentation "A symbol specifying the type of the encompassing expression instance. Can be either a :literal, :context, :word or :fractal."
     :reader mrosetta-extype)
    (fractals
     :initform '()
@@ -121,6 +121,14 @@
     :reader mrosetta-has-key)
   )
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
+
+(cl-defmethod mrosetta-compile-literal ((mlexpression mrosetta-mlexpression) buffer)
+  "Compile the BUFFER content as a literal quote into the MLEXPRESSION instance in context."
+  (when (eql (length buffer) 0)
+    (error "Metalanguage syntax error: Literal expression without quoted content"))
+  (let ((lit-quote (pop buffer)))
+    (setf (slot-value mlexpression 'extype) :literal)
+    (setf (slot-value mlexpression 'regex) lit-quote)))
 
 (provide 'metarosetta)
 

@@ -71,16 +71,16 @@ The property itself is a ~symbol~ indicating the type of the expression.
 #+BEGIN_SRC emacs-lisp
 (extype
  :type symbol
- :documentation "A symbol specifying the type of the encompassing expression instance. Can be either a :quote, :context, :word or :fractal."
+ :documentation "A symbol specifying the type of the encompassing expression instance. Can be either a :literal, :context, :word or :fractal."
  :reader mrosetta-extype)
 #+END_SRC
 
 The following are the possible expression types:
 
-***** Static Quote
+***** Literal Quote
 Denotes the simplest expression defining statically quoted text which matches itself within any passed input.
 
-The quote expression type is specified as a ~:quote~.
+The quote expression type is specified as a ~:literal~.
 ***** Variable Context
 Defines variable context consisting of semantically insignificant text. While this text is unimportant for structured semantics, it remains an intrinsic part of the human-readable form.
 
@@ -336,9 +336,9 @@ Specifies whether the encompassing expression is assigned a specific key to incl
 *** Class Definition
 The /expression/ class is defined below, containing all the properties listed above.
 
-#+NAME: mrosetta-expression
+#+NAME: mrosetta-mlexpression
 #+BEGIN_SRC emacs-lisp :noweb yes :tangle yes
-(defclass mrosetta-expression ()
+(defclass mrosetta-mlexpression ()
   (
    <<mldefinition>>
    <<extype>>
@@ -363,7 +363,26 @@ The /expression/ class is defined below, containing all the properties listed ab
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
 #+END_SRC
 ** The Specification
+The purpose of the language is to facilitate expressions which unambiguously define a translation protocol between human-readable text and machine-digestible data structures, with the semantics completely preserved, based on an arbitrarily defined pattern of human input within a specific context.
 
+*** Literal Quote
+The simplest element defining statically quoted text which should appear literally within input text.
+
+#+NAME: mrosetta-compile-literal
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-compile-literal ((mlexpression mrosetta-mlexpression) buffer)
+  "Compile the BUFFER content as a literal quote into the MLEXPRESSION instance in context."
+  (when (eql (length buffer) 0)
+    (error "Metalanguage syntax error: Literal expression without quoted content"))
+  (let ((lit-quote (pop buffer)))
+    (setf (slot-value mlexpression 'extype) :literal)
+    (setf (slot-value mlexpression 'regex) lit-quote)))
+#+END_SRC
+
+#+NAME: mrosetta-compile-literal-symbol
+#+BEGIN_SRC emacs-lisp
+(literally 'mrosetta-compile-literal)
+#+END_SRC
 * Contexts
 ** Org
 * Connectors
