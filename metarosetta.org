@@ -1,9 +1,44 @@
 #+TITLE: Project Metarosetta Emacs Package
 
+* Header
+** Name and Definition
+#+NAME: title
+#+BEGIN_SRC emacs-lisp :tangle yes
+;;; metarosetta.el --- A semantically-driven interconnectivity framework -*- lexical-binding: t -*-
+#+END_SRC
+** Signature
+#+NAME: signature
+#+BEGIN_SRC emacs-lisp :tangle yes
+;; Author: Bruno Tedeschi <me@btedeschi.com>
+#+END_SRC
+** Summary
+#+NAME: summary
+#+BEGIN_SRC text
+This package adds Metarosetta expression language support to Org-mode.
+
+It enables in-context definition of semantic protocols, within Org-mode, which automatically translate human-input text into a machine-digestible API-compatible structure particular to a given context.
+
+For details and language specification, please refer to the original package documentation and source org file.
+#+END_SRC
+
+#+NAME: commentary
+#+BEGIN_SRC emacs-lisp :noweb yes :tangle yes
+;;; Commentary:
+
+;; <<summary>>
+#+END_SRC
+** Code Marker
+#+NAME: code-marker
+#+BEGIN_SRC emacs-lisp :tangle yes
+;;; Code:
+#+END_SRC
+* Dependencies
+#+NAME: dependencies
+#+BEGIN_SRC emacs-lisp :tangle yes
+(require 'eieio)
+#+END_SRC
 * The Metalanguage
 The metalanguage specification and parser.
-
-** The Specification
 
 ** The Expression
 An entity defining a particular expression. Using the metalanguage syntax as input, it constructs all underlying logic to parse textual input and structures to map semantic information to machine-readable output.
@@ -18,6 +53,7 @@ The metalanguage-specified definition of the expression in context.
 
 This is stored as a quoted lisp list.
 
+#+NAME: mldefinition
 #+BEGIN_SRC emacs-lisp
 (mldefinition
  :initarg :mldefinition
@@ -31,6 +67,7 @@ Specifies the exact type of the expression in context.
 
 The property itself is a ~symbol~ indicating the type of the expression.
 
+#+NAME: extype
 #+BEGIN_SRC emacs-lisp
 (extype
  :type symbol
@@ -65,6 +102,7 @@ All the fractal elements existing within the encompassing expression instance. O
 
 The property itself is a list of ~mrosetta-expression~ instances.
 
+#+NAME: fractals
 #+BEGIN_SRC emacs-lisp
 (fractals
  :initform '()
@@ -80,6 +118,7 @@ In order to properly parse and distribute regex matches across the fractal expre
 
 To manage this, each tree has a single /keychain/ instance shared across all expression objects within a single fractal tree.
 
+#+NAME: rkeychain
 #+BEGIN_SRC emacs-lisp
 (rkeychain
  :initarg :rkeychain
@@ -95,7 +134,8 @@ Key management is encapsulated within a simple keychain class which holds all ge
 ******* Class Definition
 The class itself is designed as a no-argument constructor as the key generator is automatically initialized upon creation.
 
-#+BEGIN_SRC emacs-lisp
+#+NAME: mrosetta-keychain
+#+BEGIN_SRC emacs-lisp :tangle yes
 (defclass mrosetta-keychain ()
   ((lastkey
     :initform '0
@@ -115,9 +155,10 @@ This section covers all defined behavior for the keychain class.
 ******** Generate Key
 Register for a new key with a particular expression instance.
 
-#+BEGIN_SRC emacs-lisp
+#+NAME: mrosetta-generate-rkey
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-generate-rkey ((keychain mrosetta-keychain) mlexpression)
-  "Register for a new key with a particular expression instance within a provided keychain."
+  "Register for a new key with a particular MLEXPRESSION instance within a provided KEYCHAIN."
   (let ((key (+ 1 (slot-value keychain 'lastkey))))
     (setf (slot-value keychain 'keys) (plist-put (slot-value keychain 'keys) key mlexpression))
     (setf (slot-value keychain 'lastkey) key)))
@@ -125,6 +166,7 @@ Register for a new key with a particular expression instance.
 ***** Regex Key
 The regex group key awarded to the encompassing expression instance.
 
+#+NAME: rkey
 #+BEGIN_SRC emacs-lisp
 (rkey
  :type number
@@ -136,6 +178,7 @@ The compiled regular expression of the expression in context.
 
 This is the regex used under the hood when parsing through human-readable input.
 
+#+NAME: regex
 #+BEGIN_SRC emacs-lisp
 (regex
  :type string
@@ -147,6 +190,7 @@ If input is processed, this property contains the regular expression match for t
 
 The match is in raw text form.
 
+#+NAME: rmatch
 #+BEGIN_SRC emacs-lisp
 (rmatch
  :type string
@@ -156,6 +200,7 @@ The match is in raw text form.
 **** Key
 The property key to which the expression output value is assigned, if the expression itself is denoted as such.
 
+#+NAME: key
 #+BEGIN_SRC emacs-lisp
 (key
  :type string
@@ -167,6 +212,7 @@ If the encompassing expression instance outputs an end value, this property cont
 
 The property itself is either a string representation of the singular value, or a list of matched values, if the expression is marked as plural.
 
+#+NAME: value
 #+BEGIN_SRC emacs-lisp
 (value
  :type (or string list)
@@ -179,6 +225,7 @@ All specifier parameters defined for the encompassing expression instance.
 ***** Uppercase
 Match only uppercase words.
 
+#+NAME: is-uppercase
 #+BEGIN_SRC emacs-lisp
 (is-upparcase
  :initform 'nil
@@ -188,6 +235,7 @@ Match only uppercase words.
 ***** Capitalized
 Match only capitalized words.
 
+#+NAME: is-capitalized
 #+BEGIN_SRC emacs-lisp
 (is-capitalized
  :initform 'nil
@@ -197,6 +245,7 @@ Match only capitalized words.
 ***** Content
 Match only words containing specific characters or substrings.
 
+#+NAME: match-substring
 #+BEGIN_SRC emacs-lisp
 (match-substring
  :initform 'nil
@@ -210,6 +259,7 @@ Specifies whether the match of the encompassing expression has static left or ri
 ****** Left Boundary
 Specifies a statically set match prefix, if the expression defines one.
 
+#+NAME: match-prefix
 #+BEGIN_SRC emacs-lisp
 (match-prefix
  :initform 'nil
@@ -220,6 +270,7 @@ Specifies a statically set match prefix, if the expression defines one.
 ****** Right Boundary
 Specifies a statically set match suffix, if the expression defines one.
 
+#+NAME: match-suffix
 #+BEGIN_SRC emacs-lisp
 (match-suffix
  :initform 'nil
@@ -235,6 +286,7 @@ Modifiers are useful when matched text needs to be formatted and /normalized/ be
 ***** Uppercase
 Indicates whether matched text needs to be uppercased.
 
+#+NAME: should-uppercase
 #+BEGIN_SRC emacs-lisp
 (should-uppercase
  :initform 'nil
@@ -244,6 +296,7 @@ Indicates whether matched text needs to be uppercased.
 ***** Lowercase
 Indicates whether matched text needs to be lowercased.
 
+#+NAME: should-lowercase
 #+BEGIN_SRC emacs-lisp
 (should-lowercase
  :initform 'nil
@@ -253,6 +306,7 @@ Indicates whether matched text needs to be lowercased.
 **** Plurality
 If the expression defines a plural match, then the ~value~ property is in list form and this property is non-nil.
 
+#+NAME: has-plural-value
 #+BEGIN_SRC emacs-lisp
 (has-plural-value
  :initform 'nil
@@ -262,6 +316,7 @@ If the expression defines a plural match, then the ~value~ property is in list f
 **** Optionality
 Specifies whether the entire expression and its fractals within (if any) are optional in presence.
 
+#+NAME: is-optional
 #+BEGIN_SRC emacs-lisp
 (is-optional
  :initform 'nil
@@ -271,6 +326,7 @@ Specifies whether the entire expression and its fractals within (if any) are opt
 **** Assignment
 Specifies whether the encompassing expression is assigned a specific key to include within the output structure.
 
+#+NAME: has-key
 #+BEGIN_SRC emacs-lisp
 (has-key
  :initform 'nil
@@ -278,14 +334,47 @@ Specifies whether the encompassing expression is assigned a specific key to incl
  :reader mrosetta-has-key)
 #+END_SRC
 *** Class Definition
-The /expression/ class is defined as a standard EIEIO class.
+The /expression/ class is defined below, containing all the properties listed above.
 
-#+BEGIN_SRC emacs-lisp
+#+NAME: mrosetta-expression
+#+BEGIN_SRC emacs-lisp :noweb yes :tangle yes
 (defclass mrosetta-expression ()
-  (())
+  (
+   <<mldefinition>>
+   <<extype>>
+   <<fractals>>
+   <<rkeychain>>
+   <<rkey>>
+   <<regex>>
+   <<rmatch>>
+   <<key>>
+   <<value>>
+   <<is-uppercase>>
+   <<is-capitalized>>
+   <<match-substring>>
+   <<match-prefix>>
+   <<match-suffix>>
+   <<should-uppercase>>
+   <<should-lowercase>>
+   <<has-plural-value>>
+   <<is-optional>>
+   <<has-key>>
+  )
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
 #+END_SRC
+** The Specification
+
 * Contexts
 ** Org
 * Connectors
 ** Coda
+* Registration
+#+NAME: registration
+#+BEGIN_SRC emacs-lisp :tangle yes
+(provide 'metarosetta)
+#+END_SRC
+* Footer
+#+NAME: footer
+#+BEGIN_SRC emacs-lisp :tangle yes
+;;; metarosetta.el ends here
+#+END_SRC
