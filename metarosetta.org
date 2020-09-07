@@ -278,6 +278,19 @@ Specifies a statically set match suffix, if the expression defines one.
  :documentation "Specifies the suffix all possible expression matches should have, if any. Either a string or nil."
  :reader mrosetta-match-suffix)
 #+END_SRC
+***** Literal
+Match only and exactly the literal text specified here.
+
+This slot is only used in ~:literal~ expressions.
+
+#+NAME: match-literal
+#+BEGIN_SRC emacs-lisp
+(match-literal
+ :initform 'nil
+ :type (or null string)
+ :documentation "Specifies the literal string that the expression maches exclusively. Either a string or nill."
+ :reader mrosetta-match-literal)
+#+END_SRC
 **** Modifier Properties
 Modifier properties defined for the encompassing expression instance.
 
@@ -354,6 +367,7 @@ The /expression/ class is defined below, containing all the properties listed ab
    <<match-substring>>
    <<match-prefix>>
    <<match-suffix>>
+   <<match-literal>>
    <<should-uppercase>>
    <<should-lowercase>>
    <<has-plural-value>>
@@ -366,22 +380,132 @@ The /expression/ class is defined below, containing all the properties listed ab
 The purpose of the language is to facilitate expressions which unambiguously define a translation protocol between human-readable text and machine-digestible data structures, with the semantics completely preserved, based on an arbitrarily defined pattern of human input within a specific context.
 
 *** Literal Quote
-The simplest element defining statically quoted text which should appear literally within input text.
+The simplest expression defining statically quoted text which should appear literally within input text.
 
-#+NAME: mrosetta-compile-literal
+#+NAME: mrosetta-parse-literal
 #+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-compile-literal ((mlexpression mrosetta-mlexpression) buffer)
-  "Compile the BUFFER content as a literal quote into the MLEXPRESSION instance in context."
-  (when (eql (length buffer) 0)
-    (error "Metalanguage syntax error: Literal expression without quoted content"))
-  (let ((lit-quote (pop buffer)))
+(cl-defmethod mrosetta-parse-literal ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the :right arg content within ARGS as a literal quote into the MLEXPRESSION instance in context."
+  (let ((literal-quote (plist-get args :right)))
+    (when (eq literal-quote nil)
+      (error "Metalanguage syntax error: Literal expression without quoted content"))
     (setf (slot-value mlexpression 'extype) :literal)
-    (setf (slot-value mlexpression 'regex) lit-quote)))
+    (setf (slot-value mlexpression 'match-literal) literal-quote)))
 #+END_SRC
 
-#+NAME: mrosetta-compile-literal-symbol
+The metalanguage itself defines this expression through the ~literally~ keyword with the accompanying quote.
+
+#+NAME: mrosetta-parse-literal-symbol
 #+BEGIN_SRC emacs-lisp
-(literally 'mrosetta-compile-literal)
+(literally 'mrosetta-parse-literal)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-literal-example
+#+BEGIN_SRC text
+(literally "Status Update:")
+#+END_SRC
+*** Word
+An expression used to capture a variable word from within input text.
+
+#+NAME: mrosetta-parse-word
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-word ((mlexpression mrosetta-mlexpression) &rest _args)
+  "Parse a word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'extype) :word))
+#+END_SRC
+
+The metalanguage defines this expression through the ~word~ keyword.
+
+#+NAME: mrosetta-parse-word-symbol
+#+BEGIN_SRC emacs-lisp
+(word 'mrosetta-parse-word)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-word-example
+#+BEGIN_SRC text
+(word)
+#+END_SRC
+
+**** Word Specifiers
+In addition to the ability to match any kind of word, the metalanguage specification also supports matching only specific words based on different criteria.
+
+***** Uppercase
+Match only uppercase words.
+
+#+NAME: mrosetta-parse-word-uppercase
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-word-uppercase ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse an uppercase word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (mrosetta-parse-word mlexpression args)
+  (setf (slot-value mlexpression 'is-uppercase) t))
+#+END_SRC
+
+The metalanguage defines this expression through the ~WORD~ keyword. Note that the metalanguage syntax is case-sensitive, where case is also part of the syntax itself.
+
+#+NAME: mrosetta-parse-word-uppercase-symbol
+#+BEGIN_SRC emacs-lisp
+(WORD 'mrosetta-parse-word-uppercase)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-word-uppercase-example
+#+BEGIN_SRC text
+(WORD)
+#+END_SRC
+***** Capitalized
+Match only capitalized words.
+
+#+NAME: mrosetta-parse-word-capitalized
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-word-capitalized ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse a capitalized word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (mrosetta-parse-word mlexpression args)
+  (setf (slot-value mlexpression 'is-capitalized) t))
+#+END_SRC
+
+The metalanguage defines this expression through the ~Word~ keyword.
+
+#+NAME: mrosetta-parse-word-capitalized-symbol
+#+BEGIN_SRC emacs-lisp
+(Word 'mrosetta-parse-word-capitalized)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-word-capitalized-example
+#+BEGIN_SRC text
+(Word)
+#+END_SRC
+***** Specific Content
+Match only the words containing specific characters or content.
+
+#+NAME: mrosetta-parse-word-content
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-word-content ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse quoted text from :right arg within ARGS as matching word content into the MLEXPRESSION instance in context."
+  (let ((substring-quote (plist-get args :right)))
+    (when (eq substring-quote nil)
+      (error "Metalanguage syntax error: Substring match expression without quoted content"))
+    (setf (slot-value mlexpression 'match-substring) substring-quote)))
+#+END_SRC
+
+The metalanguage defines this expression through the ~with~ keyword with the accompanying quote.
+
+#+NAME: mrosetta-parse-word-content-symbol
+#+BEGIN_SRC emacs-lisp
+(with 'mrosetta-parse-word-content)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-word-content-example
+#+BEGIN_SRC text
+(word with "-")
 #+END_SRC
 * Contexts
 ** Org
