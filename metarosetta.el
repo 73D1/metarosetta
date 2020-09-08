@@ -133,28 +133,47 @@
     (when (eq literal-quote nil)
       (error "Metalanguage syntax error: Literal expression without quoted content"))
     (setf (slot-value mlexpression 'extype) :literal)
-    (setf (slot-value mlexpression 'match-literal) literal-quote)))
+    (setf (slot-value mlexpression 'match-literal) literal-quote))
+  (plist-put args :right nil))
 
-(cl-defmethod mrosetta-parse-word ((mlexpression mrosetta-mlexpression) &rest _args)
+(cl-defmethod mrosetta-parse-word ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (setf (slot-value mlexpression 'extype) :word))
+  (setf (slot-value mlexpression 'extype) :word)
+  args)
 
 (cl-defmethod mrosetta-parse-word-uppercase ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse an uppercase word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (mrosetta-parse-word mlexpression args)
-  (setf (slot-value mlexpression 'is-uppercase) t))
+  (setf (slot-value mlexpression 'is-uppercase) t)
+  (mrosetta-parse-word mlexpression args))
 
 (cl-defmethod mrosetta-parse-word-capitalized ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a capitalized word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (mrosetta-parse-word mlexpression args)
-  (setf (slot-value mlexpression 'is-capitalized) t))
+  (setf (slot-value mlexpression 'is-capitalized) t)
+  (mrosetta-parse-word mlexpression args))
 
 (cl-defmethod mrosetta-parse-word-content ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse quoted text from :right arg within ARGS as matching word content into the MLEXPRESSION instance in context."
   (let ((substring-quote (plist-get args :right)))
     (when (eq substring-quote nil)
       (error "Metalanguage syntax error: Substring match expression without quoted content"))
-    (setf (slot-value mlexpression 'match-substring) substring-quote)))
+    (setf (slot-value mlexpression 'match-substring) substring-quote))
+  (plist-put args :right nil))
+
+(cl-defmethod mrosetta-parse-word-prefix ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse quoted text from :left arg within ARGS as matching word prefix into the MLEXPRESSION instance in context."
+  (let ((prefix-quote (plist-get args :left)))
+    (when (eq prefix-quote nil)
+      (error "Metalanguage syntax error: Prefix match expression without quoted content"))
+    (setf (slot-value mlexpression 'match-prefix) prefix-quote))
+  (plist-put args :left nil))
+
+(cl-defmethod mrosetta-parse-word-suffix ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse quoted text from :left arg within ARGS as matching word suffix into the MLEXPRESSION instance in context."
+  (let ((suffix-quote (plist-get args :left)))
+    (when (eq suffix-quote nil)
+      (error "Metalanguage syntax error: Suffix match expression without quoted content"))
+    (setf (slot-value mlexpression 'match-suffix) suffix-quote))
+  (plist-put args :left nil))
 
 (provide 'metarosetta)
 
