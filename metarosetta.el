@@ -69,8 +69,9 @@
     :documentation "The textual match of the encompassing expression within the currently set input."
     :reader mrosetta-rmatch)
    (key
-    :type string
-    :documentation "The property key to which the expression output value is assigned, if any."
+    :initform 'nil
+    :type (or null string)
+    :documentation "The property key to which the expression output value is assigned, if any. Either a string or nil."
     :reader mrosetta-key)
    (value
     :type (or string list)
@@ -120,10 +121,6 @@
     :initform 'nil
     :documentation "Specifies whether the encompassing expression is optional to match within input text. Either non-nil or nil."
     :reader mrosetta-is-optional)
-   (has-key
-    :initform 'nil
-    :documentation "Specifies whether the encompassing expression is assigned a key for its output. Either nil or non-nil."
-    :reader mrosetta-has-key)
   )
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
 
@@ -206,6 +203,30 @@
   (plist-put args :right nil))
 
 (push '(to . mrosetta-parse-word-modifier) mrosetta-mlsyntax)
+
+(cl-defmethod mrosetta-parse-word-plurality ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse a plural words expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'has-plural-value) t)
+  (mrosetta-parse-word mlexpression args))
+
+(push '(words . mrosetta-parse-word-plurality) mrosetta-mlsyntax)
+
+(cl-defmethod mrosetta-parse-optionality ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse expression optionality into the MLEXPRESSION instance in context. This function utilizes no ARGS."
+  (setf (slot-value mlexpression 'is-optional) t)
+  args)
+
+(push '(optional . mrosetta-parse-optionality) mrosetta-mlsyntax)
+
+(cl-defmethod mrosetta-parse-key ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the key symbol from :right arg within ARGS into the MLEXPRESSION instance in context."
+  (let ((key-symbol (plist-get args :right)))
+    (when (eq key-symbol nil)
+      (error "Metalanguage syntax error: Key assignment without contextual key symbol"))
+    (setf (slot-value mlexpression 'key) key-symbol))
+  (plist-put args :right nil))
+
+(push '(as . mrosetta-parse-key) mrosetta-mlsyntax)
 
 (provide 'metarosetta)
 

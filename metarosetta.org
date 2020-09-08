@@ -203,8 +203,9 @@ The property key to which the expression output value is assigned, if the expres
 #+NAME: key
 #+BEGIN_SRC emacs-lisp
 (key
- :type string
- :documentation "The property key to which the expression output value is assigned, if any."
+ :initform 'nil
+ :type (or null string)
+ :documentation "The property key to which the expression output value is assigned, if any. Either a string or nil."
  :reader mrosetta-key)
 #+END_SRC
 **** Value
@@ -336,16 +337,6 @@ Specifies whether the entire expression and its fractals within (if any) are opt
  :documentation "Specifies whether the encompassing expression is optional to match within input text. Either non-nil or nil."
  :reader mrosetta-is-optional)
 #+END_SRC
-**** Assignment
-Specifies whether the encompassing expression is assigned a specific key to include within the output structure.
-
-#+NAME: has-key
-#+BEGIN_SRC emacs-lisp
-(has-key
- :initform 'nil
- :documentation "Specifies whether the encompassing expression is assigned a key for its output. Either nil or non-nil."
- :reader mrosetta-has-key)
-#+END_SRC
 *** Class Definition
 The /expression/ class is defined below, containing all the properties listed above.
 
@@ -372,7 +363,6 @@ The /expression/ class is defined below, containing all the properties listed ab
    <<should-lowercase>>
    <<has-plural-value>>
    <<is-optional>>
-   <<has-key>>
   )
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
 #+END_SRC
@@ -574,7 +564,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (";" suffixed word)
 #+END_SRC
-**** Modifiers
+**** Word Modifiers
 Modify captured words before structured output.
 
 Modifiers are defined as contextual arguments succeeding the general modifier keyword.
@@ -635,6 +625,85 @@ The metalanguage defines the modifier context through the ~to~ keyword followed 
 #+NAME: mrosetta-parse-word-modifier-symbol
 #+BEGIN_SRC emacs-lisp :tangle yes
 (push '(to . mrosetta-parse-word-modifier) mrosetta-mlsyntax)
+#+END_SRC
+**** Word Plurality
+Instead of a single value, capture all values matching defined criteria within the encompassing expression context.
+
+#+NAME: mrosetta-parse-word-plurality
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-word-plurality ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse a plural words expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'has-plural-value) t)
+  (mrosetta-parse-word mlexpression args))
+#+END_SRC
+
+The metalanguage defines this expression through the ~words~ keyword.
+
+#+NAME: mrosetta-parse-word-plurality-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(words . mrosetta-parse-word-plurality) mrosetta-mlsyntax)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mroseta-parse-word-plurality-example
+#+BEGIN_SRC text
+(words)
+#+END_SRC
+*** Optionality
+Specify whether the encompassing expression should be considered as an optional, or required match.
+
+Input text without an optional expression match still gets processed, structured and output. Any input not matching all mandatory expressions is disregarded.
+
+All defined expressions are considered as mandatory by default.
+
+#+NAME: mrosetta-parse-optionality
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-optionality ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse expression optionality into the MLEXPRESSION instance in context. This function utilizes no ARGS."
+  (setf (slot-value mlexpression 'is-optional) t)
+  args)
+#+END_SRC
+
+The metalanguage defines this expression through the ~optional~ keyword.
+
+#+NAME: mrosetta-parse-optionality-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(optional . mrosetta-parse-optionality) mrosetta-mlsyntax)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-optionality-example
+#+BEGIN_SRC text
+(optional word)
+#+END_SRC
+*** Assignment
+Assign a key to the resulting value of the encompassing expression.
+
+#+NAME: mrosetta-parse-key
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-key ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the key symbol from :right arg within ARGS into the MLEXPRESSION instance in context."
+  (let ((key-symbol (plist-get args :right)))
+    (when (eq key-symbol nil)
+      (error "Metalanguage syntax error: Key assignment without contextual key symbol"))
+    (setf (slot-value mlexpression 'key) key-symbol))
+  (plist-put args :right nil))
+#+END_SRC
+
+The metalanguage defines the assignment expression through the ~as~ keyword followed by the key symbol.
+
+#+NAME: mrosetta-parse-key-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(as . mrosetta-parse-key) mrosetta-mlsyntax)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-key-example
+#+BEGIN_SRC text
+(word as a_property)
 #+END_SRC
 * Contexts
 ** Org
