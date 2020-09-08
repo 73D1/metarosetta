@@ -379,6 +379,13 @@ The /expression/ class is defined below, containing all the properties listed ab
 ** The Specification
 The purpose of the language is to facilitate expressions which unambiguously define a translation protocol between human-readable text and machine-digestible data structures, with the semantics completely preserved, based on an arbitrarily defined pattern of human input within a specific context.
 
+All keywords within the specification are stored as symbols which map to their respective parse functions.
+
+#+NAME: mrosetta-mlsyntax
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defvar mrosetta-mlsyntax '())
+#+END_SRC
+
 *** Literal Quote
 The simplest expression defining statically quoted text which should appear literally within input text.
 
@@ -397,8 +404,8 @@ The simplest expression defining statically quoted text which should appear lite
 The metalanguage itself defines this expression through the ~literally~ keyword with the accompanying quote.
 
 #+NAME: mrosetta-parse-literal-symbol
-#+BEGIN_SRC emacs-lisp
-(literally 'mrosetta-parse-literal)
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(literally . mrosetta-parse-literal) mrosetta-mlsyntax)
 #+END_SRC
 
 A usage example is as follows:
@@ -421,8 +428,8 @@ An expression used to capture a variable word from within input text.
 The metalanguage defines this expression through the ~word~ keyword.
 
 #+NAME: mrosetta-parse-word-symbol
-#+BEGIN_SRC emacs-lisp
-(word 'mrosetta-parse-word)
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(word . mrosetta-parse-word) mrosetta-mlsyntax)
 #+END_SRC
 
 A usage example is as follows:
@@ -449,8 +456,8 @@ Match only uppercase words.
 The metalanguage defines this expression through the ~WORD~ keyword. Note that the metalanguage syntax is case-sensitive, where case is also part of the syntax itself.
 
 #+NAME: mrosetta-parse-word-uppercase-symbol
-#+BEGIN_SRC emacs-lisp
-(WORD 'mrosetta-parse-word-uppercase)
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(WORD . mrosetta-parse-word-uppercase) mrosetta-mlsyntax)
 #+END_SRC
 
 A usage example is as follows:
@@ -473,8 +480,8 @@ Match only capitalized words.
 The metalanguage defines this expression through the ~Word~ keyword.
 
 #+NAME: mrosetta-parse-word-capitalized-symbol
-#+BEGIN_SRC emacs-lisp
-(Word 'mrosetta-parse-word-capitalized)
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(Word . mrosetta-parse-word-capitalized) mrosetta-mlsyntax)
 #+END_SRC
 
 A usage example is as follows:
@@ -500,8 +507,8 @@ Match only the words containing specific characters or content.
 The metalanguage defines this expression through the ~with~ keyword with the accompanying quote.
 
 #+NAME: mrosetta-parse-word-content-symbol
-#+BEGIN_SRC emacs-lisp
-(with 'mrosetta-parse-word-content)
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(with . mrosetta-parse-word-content) mrosetta-mlsyntax)
 #+END_SRC
 
 A usage example is as follows:
@@ -530,8 +537,8 @@ Match only words prefixed with the supplied quoted content.
 The metalanguage defines this expression through the ~prefixed~ keyword with the accompanying quote preceding the keyword.
 
 #+NAME: mrosetta-parse-word-prefix-symbol
-#+BEGIN_SRC emacs-lisp
-(prefixed 'mrosetta-parse-word-prefix)
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(prefixed . mrosetta-parse-word-prefix) mrosetta-mlsyntax)
 #+END_SRC
 
 A usage example is as follows:
@@ -557,8 +564,8 @@ Match only words suffixed with the supplied quoted content.
 The metalanguage defines this expression through the ~suffixed~ keyword with the accompanying quote preceding the keyword.
 
 #+NAME: mrosetta-parse-word-suffix-symbol
-#+BEGIN_SRC emacs-lisp
-(suffixed 'mrosetta-parse-word-suffix)
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(suffixed . mrosetta-parse-word-suffix) mrosetta-mlsyntax)
 #+END_SRC
 
 A usage example is as follows:
@@ -566,6 +573,68 @@ A usage example is as follows:
 #+NAME: mrosetta-parse-word-suffix-example
 #+BEGIN_SRC text
 (";" suffixed word)
+#+END_SRC
+**** Modifiers
+Modify captured words before structured output.
+
+Modifiers are defined as contextual arguments succeeding the general modifier keyword.
+
+#+NAME: mrosetta-mlsyntax-modifiers
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defvar mrosetta-mlsyntax-modifiers '())
+#+END_SRC
+
+***** Uppercase
+Transform captured words to uppercase format.
+
+To do so, use the ~uppercase~ argument following the ~to~ modifier keyword.
+
+#+NAME: mrosetta-parse-word-modifier-uppercase-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(uppercase . should-uppercase) mrosetta-mlsyntax-modifiers)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-word-modifier-uppercase-example
+#+BEGIN_SRC text
+(word to uppercase)
+#+END_SRC
+***** Lowercase
+Transform captured words to lowercase format.
+
+To do so, use the ~lowercase~ argument following the ~to~ modifier keyword.
+
+#+NAME: mrosetta-parse-word-modifier-lowercase-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(lowercase . should-lowercase) mrosetta-mlsyntax-modifiers)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-word-modifier-lowercase-example
+#+BEGIN_SRC text
+(word to lowercase)
+#+END_SRC
+***** Modifier Argument Parser
+All modifier contextual arguments are handled by a central modifier parser.
+
+#+NAME: mrosetta-parse-word-modifier
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-word-modifier ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the modifier symbol from :right arg within ARGS into the MLEXPRESSION instance in context."
+  (let ((modifier-symbol (plist-get args :right)))
+    (when (eq modifier-symbol nil)
+      (error "Metalanguage syntax error: Modifier expression without contextual argument symbol"))
+    (setf (slot-value mlexpression (cdr (assq modifier-symbol mrosetta-mlsyntax-modifiers))) t))
+  (plist-put args :right nil))
+#+END_SRC
+
+The metalanguage defines the modifier context through the ~to~ keyword followed by the contextual arguments listed above.
+
+#+NAME: mrosetta-parse-word-modifier-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(to . mrosetta-parse-word-modifier) mrosetta-mlsyntax)
 #+END_SRC
 * Contexts
 ** Org
