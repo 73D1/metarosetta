@@ -18,19 +18,13 @@
   ((lastkey
     :initform '0
     :type number
-    :documentation "The last key generated and assigned to a group within the context of a single instance."
-    :reader mrosetta-lastkey)
-   (keys
-    :initform '()
-    :type list
-    :documentation "A property list containing all the generated keys and corresponding references of respectively assigned objects."
-    :reader mrosetta-keys))
-  "A regex group key generator and manager.")
+    :documentation "The last key generated and assigned to a group within the context of a single keychain instance."
+    :reader mrosetta-lastkey))
+  "A regex group key generator.")
 
-(cl-defmethod mrosetta-generate-rkey ((keychain mrosetta-keychain) mlexpression)
-  "Register for a new key with a particular MLEXPRESSION instance within a provided KEYCHAIN."
+(cl-defmethod mrosetta-generate-regex-key ((keychain mrosetta-keychain))
+  "Generate a new key within a provided KEYCHAIN."
   (let ((key (+ 1 (slot-value keychain 'lastkey))))
-    (setf (slot-value keychain 'keys) (plist-put (slot-value keychain 'keys) key mlexpression))
     (setf (slot-value keychain 'lastkey) key)))
 
 (defclass mrosetta-mlexpression ()
@@ -43,7 +37,7 @@
     :reader mrosetta-mldefinition)
    (extype
     :type symbol
-    :documentation "A symbol specifying the type of the encompassing expression instance. Can be either a :literal, :context, :word or :fractal."
+    :documentation "A symbol specifying the type of the encompassing expression instance. Can be either a :literal, :match or :fractal."
     :reader mrosetta-extype)
    (fractals
     :initform '()
@@ -56,27 +50,51 @@
     :type mrosetta-keychain
     :documentation "The regex keychain instance managing keys for the encompassing expression tree."
     :reader mrosetta-rkeychain)
-   (rkey
-    :type number
-    :documentation "The regex matching group key for the encompassing expression instance."
-    :reader mrosetta-rkey)
    (regex
     :type string
     :documentation "The compiled regular expression of the expression in context."
     :reader mrosetta-regex)
+   (regex-key
+    :type number
+    :documentation "The regex matching group key for the encompassing expression instance."
+    :reader mrosetta-regex-key)
+   (rbase
+    :type string
+    :documentation "The regular expression used as a foundational base in compilation of the match-extracting regular expression."
+    :reader mrosetta-rbase)
    (rmatch
     :type string
-    :documentation "The textual match of the encompassing expression within the currently set input."
+    :documentation "The regular expression of the encompassing expression's semantic match."
     :reader mrosetta-rmatch)
+   (rmatch-key
+    :type number
+    :documentation "The regex group key for the encompassing expression's output value match."
+    :reader mrosetta-rmatch-key)
+   (rprefix
+    :initform 'nil
+    :type (or null string)
+    :documentation "The regular expression matching a specified prefix of the encompassing expression instance. Either a regex string or nil."
+    :reader mrosetta-rprefix)
+   (rprefix-key
+    :initform 'nil
+    :type (or null number)
+    :documentation "The regex group key for the encompassing expression's prefix match. Either a group number or nil."
+    :reader mrosetta-rprefix-key)
+   (rsuffix
+    :initform 'nil
+    :type (or null string)
+    :documentation "The regular expression matching a specified suffix of the encompassing expression instance. Either a regex string or nil."
+    :reader mrosetta-rsuffix)
+   (rsuffix-key
+    :initform 'nil
+    :type (or null number)
+    :documentation "The regex group key for the encompassing expression's suffix match. Either a group number or nil."
+    :reader mrosetta-rsuffix-key)
    (key
     :initform 'nil
     :type (or null string)
     :documentation "The property key to which the expression output value is assigned, if any. Either a string or nil."
     :reader mrosetta-key)
-   (value
-    :type (or string list)
-    :documentation "The output value matching the encompassing expression instance within the currently set input."
-    :reader mrosetta-value)
    (is-upparcase
     :initform 'nil
     :documentation "Specifies whether the encompassing expression matches only uppercase words. Either non-nil or nil."
@@ -85,11 +103,6 @@
     :initform 'nil
     :documentation "Specifies whether the encompassing expression matches only capitalized words. Either non-nil or nil."
     :reader mrosetta-is-capitalized)
-   (match-substring
-    :initform 'nil
-    :type (or null string)
-    :documentation "Specifies a specific substring all possible expression matches should contain, if any. Either a string or nil."
-    :reader mrosetta-match-substring)
    (match-prefix
     :initform 'nil
     :type (or null string)
@@ -100,27 +113,33 @@
     :type (or null string)
     :documentation "Specifies the suffix all possible expression matches should have, if any. Either a string or nil."
     :reader mrosetta-match-suffix)
+   (match-substring
+    :initform 'nil
+    :type (or null string)
+    :documentation "Specifies a specific substring all possible expression matches should contain, if any. Either a string or nil."
+    :reader mrosetta-match-substring)
    (match-literal
     :initform 'nil
     :type (or null string)
     :documentation "Specifies the literal string that the expression maches exclusively. Either a string or nill."
     :reader mrosetta-match-literal)
-   (should-uppercase
+   (modifier
     :initform 'nil
-    :documentation "Specifies whether the original encompassing expression match should get uppercased."
-    :reader mrosetta-should-uppercase)
-   (should-lowercase
-    :initform 'nil
-    :documentation "Specifies whether the original encompassing expression match should get lowercased."
-    :reader mrosetta-should-lowercase)
-   (has-plural-value
+    :type (or null symbol)
+    :documentation "Specifies a symbol referencing a stored modifier function, if any. Either a symbol or nil."
+    :reader mrosetta-modifier)
+   (is-plural
     :initform 'nil
     :documentation "Specifies whether the encompassing expression matches plural values or just a single one. Either nil or non-nil."
-    :reader mrosetta-has-plural-value)
+    :reader mrosetta-is-plural)
    (is-optional
     :initform 'nil
     :documentation "Specifies whether the encompassing expression is optional to match within input text. Either non-nil or nil."
     :reader mrosetta-is-optional)
+   (is-contextual
+    :initform 'nil
+    :documentation "Specifies whether the encompassing expression should be considered as contextual only. Either non-nil or nil."
+    :reader mrosetta-is-contextual)
   )
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
 
@@ -132,84 +151,114 @@
     (when (eq literal-quote nil)
       (error "Metalanguage syntax error: Literal expression without quoted content"))
     (setf (slot-value mlexpression 'extype) :literal)
+    (setf (slot-value mlexpression 'rbase) literal-quote) ;; this should get safely escaped
     (setf (slot-value mlexpression 'match-literal) literal-quote))
   (plist-put args :right nil))
 
-(push '(literally . mrosetta-parse-literal) mrosetta-mlsyntax)
+(push '(literal . mrosetta-parse-literal) mrosetta-mlsyntax)
 
 (cl-defmethod mrosetta-parse-word ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (setf (slot-value mlexpression 'extype) :word)
+  (setf (slot-value mlexpression 'extype) :match)
+  (setf (slot-value mlexpression 'rbase) "[[:word:]]+")
   args)
 
 (push '(word . mrosetta-parse-word) mrosetta-mlsyntax)
 
 (cl-defmethod mrosetta-parse-word-uppercase ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse an uppercase word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'extype) :match)
+  (setf (slot-value mlexpression 'rbase) "[A-Z0-9]+")
   (setf (slot-value mlexpression 'is-uppercase) t)
-  (mrosetta-parse-word mlexpression args))
+  args)
 
 (push '(WORD . mrosetta-parse-word-uppercase) mrosetta-mlsyntax)
 
 (cl-defmethod mrosetta-parse-word-capitalized ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a capitalized word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'extype) :match)
+  (setf (slot-value mlexpression 'rbase) "[A-Z0-9][a-z0-9]+")
   (setf (slot-value mlexpression 'is-capitalized) t)
-  (mrosetta-parse-word mlexpression args))
+  args)
 
 (push '(Word . mrosetta-parse-word-capitalized) mrosetta-mlsyntax)
 
-(cl-defmethod mrosetta-parse-word-content ((mlexpression mrosetta-mlexpression) &rest args)
-  "Parse quoted text from :right arg within ARGS as matching word content into the MLEXPRESSION instance in context."
-  (let ((substring-quote (plist-get args :right)))
+(cl-defmethod mrosetta-parse-word-plurality ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse a plural words expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'is-plural) t)
+  (mrosetta-parse-word mlexpression args))
+
+(push '(words . mrosetta-parse-word-plurality) mrosetta-mlsyntax)
+
+(cl-defmethod mrosetta-parse-paragraph ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse a paragraph epxression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'extype) :match)
+  (setf (slot-value mlexpression 'rbase) ".+")
+  args)
+
+(push '(paragraph . mrosetta-parse-paragraph) mrosetta-mlsyntax)
+
+(cl-defmethod mrosetta-parse-paragraph-plurality ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse a plural paragraph expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'is-plural) t)
+  (mrosetta-parse-paragraph mlexpression args))
+
+(push '(paragraphs . mrosetta-parse-paragraph-plurality) mrosetta-mlsyntax)
+
+(cl-defmethod mrosetta-parse-substring ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse quoted text from :right arg within ARGS as matching element substring into the MLEXPRESSION instance in context."
+  (let ((substring-quote (plist-get args :right))
+        (rbase (slot-value mlexpression 'rbase)))
     (when (eq substring-quote nil)
       (error "Metalanguage syntax error: Substring match expression without quoted content"))
+    (setf (slot-value mlexpression 'rbase) ;; this should get safely escaped
+          (concat "\(?:"
+                  "\(?:" substring-quote "\)?" rbase "\(?:" substring-quote "\(?" rbase "\)?" "\)+"
+                  "\|"
+                  "\(?:" "\(?:" rbase "\)?" substring-quote "\)+" rbase "\(?:" substring-quote "\)?"
+                  "\)"))
     (setf (slot-value mlexpression 'match-substring) substring-quote))
   (plist-put args :right nil))
 
-(push '(with . mrosetta-parse-word-content) mrosetta-mlsyntax)
+(push '(with . mrosetta-parse-substring) mrosetta-mlsyntax)
 
-(cl-defmethod mrosetta-parse-word-prefix ((mlexpression mrosetta-mlexpression) &rest args)
-  "Parse quoted text from :left arg within ARGS as matching word prefix into the MLEXPRESSION instance in context."
+(cl-defmethod mrosetta-parse-prefix ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse quoted text from :left arg within ARGS as matching element prefix into the MLEXPRESSION instance in context."
   (let ((prefix-quote (plist-get args :left)))
     (when (eq prefix-quote nil)
       (error "Metalanguage syntax error: Prefix match expression without quoted content"))
+    (setf (slot-value mlexpression 'rprefix) prefix-quote) ;; this should get safely escaped
     (setf (slot-value mlexpression 'match-prefix) prefix-quote))
   (plist-put args :left nil))
 
-(push '(prefixed . mrosetta-parse-word-prefix) mrosetta-mlsyntax)
+(push '(prefixed . mrosetta-parse-prefix) mrosetta-mlsyntax)
 
-(cl-defmethod mrosetta-parse-word-suffix ((mlexpression mrosetta-mlexpression) &rest args)
-  "Parse quoted text from :left arg within ARGS as matching word suffix into the MLEXPRESSION instance in context."
+(cl-defmethod mrosetta-parse-suffix ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse quoted text from :left arg within ARGS as matching element suffix into the MLEXPRESSION instance in context."
   (let ((suffix-quote (plist-get args :left)))
     (when (eq suffix-quote nil)
       (error "Metalanguage syntax error: Suffix match expression without quoted content"))
+    (setf (slot-value mlexpression 'rsuffix) suffix-quote) ;; this should get safely escaped
     (setf (slot-value mlexpression 'match-suffix) suffix-quote))
   (plist-put args :left nil))
 
-(push '(suffixed . mrosetta-parse-word-suffix) mrosetta-mlsyntax)
+(push '(suffixed . mrosetta-parse-suffix) mrosetta-mlsyntax)
 
 (defvar mrosetta-mlsyntax-modifiers '())
 
-(push '(uppercase . should-uppercase) mrosetta-mlsyntax-modifiers)
+(push '(uppercase . upcase) mrosetta-mlsyntax-modifiers)
 
-(push '(lowercase . should-lowercase) mrosetta-mlsyntax-modifiers)
+(push '(lowercase . downcase) mrosetta-mlsyntax-modifiers)
 
-(cl-defmethod mrosetta-parse-word-modifier ((mlexpression mrosetta-mlexpression) &rest args)
+(cl-defmethod mrosetta-parse-modifier ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the modifier symbol from :right arg within ARGS into the MLEXPRESSION instance in context."
   (let ((modifier-symbol (plist-get args :right)))
     (when (eq modifier-symbol nil)
       (error "Metalanguage syntax error: Modifier expression without contextual argument symbol"))
-    (setf (slot-value mlexpression (cdr (assq modifier-symbol mrosetta-mlsyntax-modifiers))) t))
+    (setf (slot-value mlexpression 'modifier) modifier-symbol))
   (plist-put args :right nil))
 
-(push '(to . mrosetta-parse-word-modifier) mrosetta-mlsyntax)
-
-(cl-defmethod mrosetta-parse-word-plurality ((mlexpression mrosetta-mlexpression) &rest args)
-  "Parse a plural words expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (setf (slot-value mlexpression 'has-plural-value) t)
-  (mrosetta-parse-word mlexpression args))
-
-(push '(words . mrosetta-parse-word-plurality) mrosetta-mlsyntax)
+(push '(to . mrosetta-parse-modifier) mrosetta-mlsyntax)
 
 (cl-defmethod mrosetta-parse-optionality ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse expression optionality into the MLEXPRESSION instance in context. This function utilizes no ARGS."
@@ -227,6 +276,13 @@
   (plist-put args :right nil))
 
 (push '(as . mrosetta-parse-key) mrosetta-mlsyntax)
+
+(cl-defmethod mrosetta-parse-contextuality ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse expression contextuality into the MLEXPRESSION instance in context. This function utilizes no ARGS."
+  (setf (slot-value mlexpression 'is-contextual) t)
+  args)
+
+(push '(contextual . mrosetta-parse-contextuality) mrosetta-mlsyntax)
 
 (provide 'metarosetta)
 

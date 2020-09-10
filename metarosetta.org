@@ -71,7 +71,7 @@ The property itself is a ~symbol~ indicating the type of the expression.
 #+BEGIN_SRC emacs-lisp
 (extype
  :type symbol
- :documentation "A symbol specifying the type of the encompassing expression instance. Can be either a :literal, :context, :word or :fractal."
+ :documentation "A symbol specifying the type of the encompassing expression instance. Can be either a :literal, :match or :fractal."
  :reader mrosetta-extype)
 #+END_SRC
 
@@ -81,24 +81,16 @@ The following are the possible expression types:
 Denotes the simplest expression defining statically quoted text which matches itself within any passed input.
 
 The quote expression type is specified as a ~:literal~.
-***** Variable Context
-Defines variable context consisting of semantically insignificant text. While this text is unimportant for structured semantics, it remains an intrinsic part of the human-readable form.
+***** Match
+An expression matching semantically significant information. These are either words or paragraphs of captured text.
 
-These expressions are key in the ability to regenerate the human-readable text with updated semantic information from a machine-generated source. This enables true two-way trans-operability between the human and machine forms.
-
-This type of expression is specified as ~:context~.
-***** Matching Word
-An expression matching semantically significant information.
-
-A word expression is specified as a ~:word~.
+A match expression is specified as a ~:match~.
 ***** Fractal
-These are complex expressions consisting of one or more expressions within. Unless the entirety of the input text can be described with a single word expression, the /root/ expression is always a fractal.
+An expression matching a sequence of its nested child expressions.
 
-In addition, fractals *never* have end values, but can have keys assigned to them matching the fractal-subtree structure contained within.
-
-Such an expression is specified as a ~:fractal~.
+A fractal expression is specified as a ~:fractal~.
 **** Fractals
-All the fractal elements existing within the encompassing expression instance. Only fractal expression types can contain fractals themselves.
+All the fractal elements existing within the encompassing expression instance. Only ~:fractal~ instances can contain sub-expressions themselves.
 
 The property itself is a list of ~mrosetta-expression~ instances.
 
@@ -140,14 +132,9 @@ The class itself is designed as a no-argument constructor as the key generator i
   ((lastkey
     :initform '0
     :type number
-    :documentation "The last key generated and assigned to a group within the context of a single instance."
-    :reader mrosetta-lastkey)
-   (keys
-    :initform '()
-    :type list
-    :documentation "A property list containing all the generated keys and corresponding references of respectively assigned objects."
-    :reader mrosetta-keys))
-  "A regex group key generator and manager.")
+    :documentation "The last key generated and assigned to a group within the context of a single keychain instance."
+    :reader mrosetta-lastkey))
+  "A regex group key generator.")
 #+END_SRC
 ******* Behavior
 This section covers all defined behavior for the keychain class.
@@ -155,26 +142,15 @@ This section covers all defined behavior for the keychain class.
 ******** Generate Key
 Register for a new key with a particular expression instance.
 
-#+NAME: mrosetta-generate-rkey
+#+NAME: mrosetta-generate-regex-key
 #+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-generate-rkey ((keychain mrosetta-keychain) mlexpression)
-  "Register for a new key with a particular MLEXPRESSION instance within a provided KEYCHAIN."
+(cl-defmethod mrosetta-generate-regex-key ((keychain mrosetta-keychain))
+  "Generate a new key within a provided KEYCHAIN."
   (let ((key (+ 1 (slot-value keychain 'lastkey))))
-    (setf (slot-value keychain 'keys) (plist-put (slot-value keychain 'keys) key mlexpression))
     (setf (slot-value keychain 'lastkey) key)))
 #+END_SRC
-***** Regex Key
-The regex group key awarded to the encompassing expression instance.
-
-#+NAME: rkey
-#+BEGIN_SRC emacs-lisp
-(rkey
- :type number
- :documentation "The regex matching group key for the encompassing expression instance."
- :reader mrosetta-rkey)
-#+END_SRC
 ***** Regular Expression
-The compiled regular expression of the expression in context.
+The compiled regular expression of the metalanguage expression in context.
 
 This is the regex used under the hood when parsing through human-readable input.
 
@@ -185,17 +161,90 @@ This is the regex used under the hood when parsing through human-readable input.
  :documentation "The compiled regular expression of the expression in context."
  :reader mrosetta-regex)
 #+END_SRC
-***** Regex Match
-If input is processed, this property contains the regular expression match for the encompassing expression instance.
 
-The match is in raw text form.
+In addition, each match-extracting regular expression has a corresponding group key by which the respective match is extracted.
+
+#+NAME: regex-key
+#+BEGIN_SRC emacs-lisp
+(regex-key
+ :type number
+ :documentation "The regex matching group key for the encompassing expression instance."
+ :reader mrosetta-regex-key)
+#+END_SRC
+
+****** Base
+The foundational element from which the matching regular expression is constructed.
+
+#+NAME: rbase
+#+BEGIN_SRC emacs-lisp
+(rbase
+ :type string
+ :documentation "The regular expression used as a foundational base in compilation of the match-extracting regular expression."
+ :reader mrosetta-rbase)
+#+END_SRC
+****** Match
+The regular expression of the match itself.
 
 #+NAME: rmatch
 #+BEGIN_SRC emacs-lisp
 (rmatch
  :type string
- :documentation "The textual match of the encompassing expression within the currently set input."
+ :documentation "The regular expression of the encompassing expression's semantic match."
  :reader mrosetta-rmatch)
+#+END_SRC
+
+The regex is paired with its group key used for match extraction.
+
+#+NAME: rmatch-key
+#+BEGIN_SRC emacs-lisp
+(rmatch-key
+ :type number
+ :documentation "The regex group key for the encompassing expression's output value match."
+ :reader mrosetta-rmatch-key)
+#+END_SRC
+****** Prefix
+The regular expression used for matching a specified prefix of the expression in context, if any.
+
+#+NAME: rprefix
+#+BEGIN_SRC emacs-lisp
+(rprefix
+ :initform 'nil
+ :type (or null string)
+ :documentation "The regular expression matching a specified prefix of the encompassing expression instance. Either a regex string or nil."
+ :reader mrosetta-rprefix)
+#+END_SRC
+
+The regex is paired with its group key used for the prefix match extraction.
+
+#+NAME: rprefix-key
+#+BEGIN_SRC emacs-lisp
+(rprefix-key
+ :initform 'nil
+ :type (or null number)
+ :documentation "The regex group key for the encompassing expression's prefix match. Either a group number or nil."
+ :reader mrosetta-rprefix-key)
+#+END_SRC
+****** Suffix
+The regular expression used for matching a specified suffix of the expression in context, if any.
+
+#+NAME: rsuffix
+#+BEGIN_SRC emacs-lisp
+(rsuffix
+ :initform 'nil
+ :type (or null string)
+ :documentation "The regular expression matching a specified suffix of the encompassing expression instance. Either a regex string or nil."
+ :reader mrosetta-rsuffix)
+#+END_SRC
+
+The regex is paired with its group key used for the suffix match extraction.
+
+#+NAME: rsuffix-key
+#+BEGIN_SRC emacs-lisp
+(rsuffix-key
+ :initform 'nil
+ :type (or null number)
+ :documentation "The regex group key for the encompassing expression's suffix match. Either a group number or nil."
+ :reader mrosetta-rsuffix-key)
 #+END_SRC
 **** Key
 The property key to which the expression output value is assigned, if the expression itself is denoted as such.
@@ -207,18 +256,6 @@ The property key to which the expression output value is assigned, if the expres
  :type (or null string)
  :documentation "The property key to which the expression output value is assigned, if any. Either a string or nil."
  :reader mrosetta-key)
-#+END_SRC
-**** Value
-If the encompassing expression instance outputs an end value, this property contains the value within the currently set input text.
-
-The property itself is either a string representation of the singular value, or a list of matched values, if the expression is marked as plural.
-
-#+NAME: value
-#+BEGIN_SRC emacs-lisp
-(value
- :type (or string list)
- :documentation "The output value matching the encompassing expression instance within the currently set input."
- :reader mrosetta-value)
 #+END_SRC
 **** Specifier Properties
 All specifier parameters defined for the encompassing expression instance.
@@ -242,17 +279,6 @@ Match only capitalized words.
  :initform 'nil
  :documentation "Specifies whether the encompassing expression matches only capitalized words. Either non-nil or nil."
  :reader mrosetta-is-capitalized)
-#+END_SRC
-***** Content
-Match only words containing specific characters or substrings.
-
-#+NAME: match-substring
-#+BEGIN_SRC emacs-lisp
-(match-substring
- :initform 'nil
- :type (or null string)
- :documentation "Specifies a specific substring all possible expression matches should contain, if any. Either a string or nil."
- :reader mrosetta-match-substring)
 #+END_SRC
 ***** Boundary Properties
 Specifies whether the match of the encompassing expression has static left or right boundaries.
@@ -279,6 +305,17 @@ Specifies a statically set match suffix, if the expression defines one.
  :documentation "Specifies the suffix all possible expression matches should have, if any. Either a string or nil."
  :reader mrosetta-match-suffix)
 #+END_SRC
+***** Content
+Match only words containing specific characters or substrings.
+
+#+NAME: match-substring
+#+BEGIN_SRC emacs-lisp
+(match-substring
+ :initform 'nil
+ :type (or null string)
+ :documentation "Specifies a specific substring all possible expression matches should contain, if any. Either a string or nil."
+ :reader mrosetta-match-substring)
+#+END_SRC
 ***** Literal
 Match only and exactly the literal text specified here.
 
@@ -292,40 +329,28 @@ This slot is only used in ~:literal~ expressions.
  :documentation "Specifies the literal string that the expression maches exclusively. Either a string or nill."
  :reader mrosetta-match-literal)
 #+END_SRC
-**** Modifier Properties
-Modifier properties defined for the encompassing expression instance.
-
+**** Modifier
 Modifiers are useful when matched text needs to be formatted and /normalized/ before being structured within the machine-digestible output.
 
-***** Uppercase
-Indicates whether matched text needs to be uppercased.
+A modifier property is defined as a symbol referencing a stored function capable of a particular modification, like ~upcase~ for uppercasing the entirety of the output, or ~downcase~ for lowercasing.
 
-#+NAME: should-uppercase
+#+NAME: modifier
 #+BEGIN_SRC emacs-lisp
-(should-uppercase
+(modifier
  :initform 'nil
- :documentation "Specifies whether the original encompassing expression match should get uppercased."
- :reader mrosetta-should-uppercase)
-#+END_SRC
-***** Lowercase
-Indicates whether matched text needs to be lowercased.
-
-#+NAME: should-lowercase
-#+BEGIN_SRC emacs-lisp
-(should-lowercase
- :initform 'nil
- :documentation "Specifies whether the original encompassing expression match should get lowercased."
- :reader mrosetta-should-lowercase)
+ :type (or null symbol)
+ :documentation "Specifies a symbol referencing a stored modifier function, if any. Either a symbol or nil."
+ :reader mrosetta-modifier)
 #+END_SRC
 **** Plurality
-If the expression defines a plural match, then the ~value~ property is in list form and this property is non-nil.
+If the expression defines a plural match, then the output value is in list form and this property is non-nil.
 
-#+NAME: has-plural-value
+#+NAME: is-plural
 #+BEGIN_SRC emacs-lisp
-(has-plural-value
+(is-plural
  :initform 'nil
  :documentation "Specifies whether the encompassing expression matches plural values or just a single one. Either nil or non-nil."
- :reader mrosetta-has-plural-value)
+ :reader mrosetta-is-plural)
 #+END_SRC
 **** Optionality
 Specifies whether the entire expression and its fractals within (if any) are optional in presence.
@@ -336,6 +361,16 @@ Specifies whether the entire expression and its fractals within (if any) are opt
  :initform 'nil
  :documentation "Specifies whether the encompassing expression is optional to match within input text. Either non-nil or nil."
  :reader mrosetta-is-optional)
+#+END_SRC
+**** Contextuality
+Specifies whether the encompassing expression should be considered as contextual. Contextual expressions are matched but never included in structured semantic output.
+
+#+NAME: is-contextual
+#+BEGIN_SRC emacs-lisp
+(is-contextual
+ :initform 'nil
+ :documentation "Specifies whether the encompassing expression should be considered as contextual only. Either non-nil or nil."
+ :reader mrosetta-is-contextual)
 #+END_SRC
 *** Class Definition
 The /expression/ class is defined below, containing all the properties listed above.
@@ -348,21 +383,26 @@ The /expression/ class is defined below, containing all the properties listed ab
    <<extype>>
    <<fractals>>
    <<rkeychain>>
-   <<rkey>>
    <<regex>>
+   <<regex-key>>
+   <<rbase>>
    <<rmatch>>
+   <<rmatch-key>>
+   <<rprefix>>
+   <<rprefix-key>>
+   <<rsuffix>>
+   <<rsuffix-key>>
    <<key>>
-   <<value>>
    <<is-uppercase>>
    <<is-capitalized>>
-   <<match-substring>>
    <<match-prefix>>
    <<match-suffix>>
+   <<match-substring>>
    <<match-literal>>
-   <<should-uppercase>>
-   <<should-lowercase>>
-   <<has-plural-value>>
+   <<modifier>>
+   <<is-plural>>
    <<is-optional>>
+   <<is-contextual>>
   )
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
 #+END_SRC
@@ -387,22 +427,23 @@ The simplest expression defining statically quoted text which should appear lite
     (when (eq literal-quote nil)
       (error "Metalanguage syntax error: Literal expression without quoted content"))
     (setf (slot-value mlexpression 'extype) :literal)
+    (setf (slot-value mlexpression 'rbase) literal-quote) ;; this should get safely escaped
     (setf (slot-value mlexpression 'match-literal) literal-quote))
   (plist-put args :right nil))
 #+END_SRC
 
-The metalanguage itself defines this expression through the ~literally~ keyword with the accompanying quote.
+The metalanguage itself defines this expression through the ~literal~ keyword with the accompanying quote.
 
 #+NAME: mrosetta-parse-literal-symbol
 #+BEGIN_SRC emacs-lisp :tangle yes
-(push '(literally . mrosetta-parse-literal) mrosetta-mlsyntax)
+(push '(literal . mrosetta-parse-literal) mrosetta-mlsyntax)
 #+END_SRC
 
 A usage example is as follows:
 
 #+NAME: mrosetta-parse-literal-example
 #+BEGIN_SRC text
-(literally "Status Update:")
+(literal "Status Update:")
 #+END_SRC
 *** Word
 An expression used to capture a variable word from within input text.
@@ -411,7 +452,8 @@ An expression used to capture a variable word from within input text.
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-word ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (setf (slot-value mlexpression 'extype) :word)
+  (setf (slot-value mlexpression 'extype) :match)
+  (setf (slot-value mlexpression 'rbase) "[[:word:]]+")
   args)
 #+END_SRC
 
@@ -439,8 +481,10 @@ Match only uppercase words.
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-word-uppercase ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse an uppercase word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'extype) :match)
+  (setf (slot-value mlexpression 'rbase) "[A-Z0-9]+")
   (setf (slot-value mlexpression 'is-uppercase) t)
-  (mrosetta-parse-word mlexpression args))
+  args)
 #+END_SRC
 
 The metalanguage defines this expression through the ~WORD~ keyword. Note that the metalanguage syntax is case-sensitive, where case is also part of the syntax itself.
@@ -463,8 +507,10 @@ Match only capitalized words.
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-word-capitalized ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a capitalized word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'extype) :match)
+  (setf (slot-value mlexpression 'rbase) "[A-Z0-9][a-z0-9]+")
   (setf (slot-value mlexpression 'is-capitalized) t)
-  (mrosetta-parse-word mlexpression args))
+  args)
 #+END_SRC
 
 The metalanguage defines this expression through the ~Word~ keyword.
@@ -480,160 +526,14 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (Word)
 #+END_SRC
-***** Specific Content
-Match only the words containing specific characters or content.
-
-#+NAME: mrosetta-parse-word-content
-#+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-parse-word-content ((mlexpression mrosetta-mlexpression) &rest args)
-  "Parse quoted text from :right arg within ARGS as matching word content into the MLEXPRESSION instance in context."
-  (let ((substring-quote (plist-get args :right)))
-    (when (eq substring-quote nil)
-      (error "Metalanguage syntax error: Substring match expression without quoted content"))
-    (setf (slot-value mlexpression 'match-substring) substring-quote))
-  (plist-put args :right nil))
-#+END_SRC
-
-The metalanguage defines this expression through the ~with~ keyword with the accompanying quote.
-
-#+NAME: mrosetta-parse-word-content-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes
-(push '(with . mrosetta-parse-word-content) mrosetta-mlsyntax)
-#+END_SRC
-
-A usage example is as follows:
-
-#+NAME: mrosetta-parse-word-content-example
-#+BEGIN_SRC text
-(word with "-")
-#+END_SRC
-**** Word Boundaries
-Match only words with the specified prefix or suffix. Note that the prefix or suffix itself isn't part of the match.
-
-***** Prefix
-Match only words prefixed with the supplied quoted content.
-
-#+NAME: mrosetta-parse-word-prefix
-#+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-parse-word-prefix ((mlexpression mrosetta-mlexpression) &rest args)
-  "Parse quoted text from :left arg within ARGS as matching word prefix into the MLEXPRESSION instance in context."
-  (let ((prefix-quote (plist-get args :left)))
-    (when (eq prefix-quote nil)
-      (error "Metalanguage syntax error: Prefix match expression without quoted content"))
-    (setf (slot-value mlexpression 'match-prefix) prefix-quote))
-  (plist-put args :left nil))
-#+END_SRC
-
-The metalanguage defines this expression through the ~prefixed~ keyword with the accompanying quote preceding the keyword.
-
-#+NAME: mrosetta-parse-word-prefix-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes
-(push '(prefixed . mrosetta-parse-word-prefix) mrosetta-mlsyntax)
-#+END_SRC
-
-A usage example is as follows:
-
-#+NAME: mrosetta-parse-word-prefix-example
-#+BEGIN_SRC text
-("#" prefixed word)
-#+END_SRC
-***** Suffix
-Match only words suffixed with the supplied quoted content.
-
-#+NAME: mrosetta-parse-word-suffix
-#+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-parse-word-suffix ((mlexpression mrosetta-mlexpression) &rest args)
-  "Parse quoted text from :left arg within ARGS as matching word suffix into the MLEXPRESSION instance in context."
-  (let ((suffix-quote (plist-get args :left)))
-    (when (eq suffix-quote nil)
-      (error "Metalanguage syntax error: Suffix match expression without quoted content"))
-    (setf (slot-value mlexpression 'match-suffix) suffix-quote))
-  (plist-put args :left nil))
-#+END_SRC
-
-The metalanguage defines this expression through the ~suffixed~ keyword with the accompanying quote preceding the keyword.
-
-#+NAME: mrosetta-parse-word-suffix-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes
-(push '(suffixed . mrosetta-parse-word-suffix) mrosetta-mlsyntax)
-#+END_SRC
-
-A usage example is as follows:
-
-#+NAME: mrosetta-parse-word-suffix-example
-#+BEGIN_SRC text
-(";" suffixed word)
-#+END_SRC
-**** Word Modifiers
-Modify captured words before structured output.
-
-Modifiers are defined as contextual arguments succeeding the general modifier keyword.
-
-#+NAME: mrosetta-mlsyntax-modifiers
-#+BEGIN_SRC emacs-lisp :tangle yes
-(defvar mrosetta-mlsyntax-modifiers '())
-#+END_SRC
-
-***** Uppercase
-Transform captured words to uppercase format.
-
-To do so, use the ~uppercase~ argument following the ~to~ modifier keyword.
-
-#+NAME: mrosetta-parse-word-modifier-uppercase-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes
-(push '(uppercase . should-uppercase) mrosetta-mlsyntax-modifiers)
-#+END_SRC
-
-A usage example is as follows:
-
-#+NAME: mrosetta-parse-word-modifier-uppercase-example
-#+BEGIN_SRC text
-(word to uppercase)
-#+END_SRC
-***** Lowercase
-Transform captured words to lowercase format.
-
-To do so, use the ~lowercase~ argument following the ~to~ modifier keyword.
-
-#+NAME: mrosetta-parse-word-modifier-lowercase-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes
-(push '(lowercase . should-lowercase) mrosetta-mlsyntax-modifiers)
-#+END_SRC
-
-A usage example is as follows:
-
-#+NAME: mrosetta-parse-word-modifier-lowercase-example
-#+BEGIN_SRC text
-(word to lowercase)
-#+END_SRC
-***** Modifier Argument Parser
-All modifier contextual arguments are handled by a central modifier parser.
-
-#+NAME: mrosetta-parse-word-modifier
-#+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-parse-word-modifier ((mlexpression mrosetta-mlexpression) &rest args)
-  "Parse the modifier symbol from :right arg within ARGS into the MLEXPRESSION instance in context."
-  (let ((modifier-symbol (plist-get args :right)))
-    (when (eq modifier-symbol nil)
-      (error "Metalanguage syntax error: Modifier expression without contextual argument symbol"))
-    (setf (slot-value mlexpression (cdr (assq modifier-symbol mrosetta-mlsyntax-modifiers))) t))
-  (plist-put args :right nil))
-#+END_SRC
-
-The metalanguage defines the modifier context through the ~to~ keyword followed by the contextual arguments listed above.
-
-#+NAME: mrosetta-parse-word-modifier-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes
-(push '(to . mrosetta-parse-word-modifier) mrosetta-mlsyntax)
-#+END_SRC
 **** Word Plurality
-Instead of a single value, capture all values matching defined criteria within the encompassing expression context.
+Instead of a single value, capture all value occurrences matching defined criteria within the encompassing expression context.
 
 #+NAME: mrosetta-parse-word-plurality
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-word-plurality ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a plural words expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (setf (slot-value mlexpression 'has-plural-value) t)
+  (setf (slot-value mlexpression 'is-plural) t)
   (mrosetta-parse-word mlexpression args))
 #+END_SRC
 
@@ -649,6 +549,216 @@ A usage example is as follows:
 #+NAME: mroseta-parse-word-plurality-example
 #+BEGIN_SRC text
 (words)
+#+END_SRC
+*** Paragraph
+An expression used to capture a variable paragraph from within input text.
+
+A paragraph is considered all text within specified boundaries. If no boundaries are set, the entire input is matched.
+
+#+NAME: mrosetta-parse-paragraph
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-paragraph ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse a paragraph epxression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'extype) :match)
+  (setf (slot-value mlexpression 'rbase) ".+")
+  args)
+#+END_SRC
+
+The metalanguage defines this expression through the ~paragraph~ keyword.
+
+#+NAME: mrosetta-parse-paragraph-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(paragraph . mrosetta-parse-paragraph) mrosetta-mlsyntax)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-paragraph-example
+#+BEGIN_SRC text
+(paragraph)
+#+END_SRC
+
+**** Paragraph Plurality
+Like words, it's possible to capture multiple paragraph occurrences matching the expression-defined criteria.
+
+Note that this construct only makes sense if paragraphs are clearly bounded.
+
+#+NAME: mrosetta-parse-paragraph-plurality
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-paragraph-plurality ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse a plural paragraph expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'is-plural) t)
+  (mrosetta-parse-paragraph mlexpression args))
+#+END_SRC
+
+The metalanguage defines this expression through the ~paragraphs~ keyword.
+
+#+NAME: mrosetta-parse-paragraph-plurality-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(paragraphs . mrosetta-parse-paragraph-plurality) mrosetta-mlsyntax)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mroseta-parse-paragraph-plurality-example
+#+BEGIN_SRC text
+(";" suffixed paragraphs)
+#+END_SRC
+*** Specifiers
+**** Content Specifier
+Match only elements containing specific characters or content.
+
+#+NAME: mrosetta-parse-substring
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-substring ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse quoted text from :right arg within ARGS as matching element substring into the MLEXPRESSION instance in context."
+  (let ((substring-quote (plist-get args :right))
+        (rbase (slot-value mlexpression 'rbase)))
+    (when (eq substring-quote nil)
+      (error "Metalanguage syntax error: Substring match expression without quoted content"))
+    (setf (slot-value mlexpression 'rbase) ;; this should get safely escaped
+          (concat "\(?:"
+                  "\(?:" substring-quote "\)?" rbase "\(?:" substring-quote "\(?" rbase "\)?" "\)+"
+                  "\|"
+                  "\(?:" "\(?:" rbase "\)?" substring-quote "\)+" rbase "\(?:" substring-quote "\)?"
+                  "\)"))
+    (setf (slot-value mlexpression 'match-substring) substring-quote))
+  (plist-put args :right nil))
+#+END_SRC
+
+The metalanguage defines this expression through the ~with~ keyword with the accompanying quote.
+
+#+NAME: mrosetta-parse-substring-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(with . mrosetta-parse-substring) mrosetta-mlsyntax)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-substring-example
+#+BEGIN_SRC text
+(word with "-")
+#+END_SRC
+**** Boundaries
+Match only elements with the specified prefix or suffix. Note that the prefix or suffix itself isn't part of the match.
+
+***** Prefix
+Match only elements prefixed with the supplied quoted content.
+
+#+NAME: mrosetta-parse-prefix
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-prefix ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse quoted text from :left arg within ARGS as matching element prefix into the MLEXPRESSION instance in context."
+  (let ((prefix-quote (plist-get args :left)))
+    (when (eq prefix-quote nil)
+      (error "Metalanguage syntax error: Prefix match expression without quoted content"))
+    (setf (slot-value mlexpression 'rprefix) prefix-quote) ;; this should get safely escaped
+    (setf (slot-value mlexpression 'match-prefix) prefix-quote))
+  (plist-put args :left nil))
+#+END_SRC
+
+The metalanguage defines this expression through the ~prefixed~ keyword with the accompanying quote preceding the keyword.
+
+#+NAME: mrosetta-parse-prefix-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(prefixed . mrosetta-parse-prefix) mrosetta-mlsyntax)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-prefix-example
+#+BEGIN_SRC text
+("#" prefixed word)
+#+END_SRC
+***** Suffix
+Match only elements suffixed with the supplied quoted content.
+
+#+NAME: mrosetta-parse-suffix
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-suffix ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse quoted text from :left arg within ARGS as matching element suffix into the MLEXPRESSION instance in context."
+  (let ((suffix-quote (plist-get args :left)))
+    (when (eq suffix-quote nil)
+      (error "Metalanguage syntax error: Suffix match expression without quoted content"))
+    (setf (slot-value mlexpression 'rsuffix) suffix-quote) ;; this should get safely escaped
+    (setf (slot-value mlexpression 'match-suffix) suffix-quote))
+  (plist-put args :left nil))
+#+END_SRC
+
+The metalanguage defines this expression through the ~suffixed~ keyword with the accompanying quote preceding the keyword.
+
+#+NAME: mrosetta-parse-suffix-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(suffixed . mrosetta-parse-suffix) mrosetta-mlsyntax)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-suffix-example
+#+BEGIN_SRC text
+(";" suffixed word)
+#+END_SRC
+*** Modifiers
+Modify captured elements before structured output.
+
+Modifiers are defined as contextual arguments succeeding the general modifier keyword.
+
+#+NAME: mrosetta-mlsyntax-modifiers
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defvar mrosetta-mlsyntax-modifiers '())
+#+END_SRC
+
+**** Uppercase
+Transform captured elements to uppercase format.
+
+To do so, use the ~uppercase~ argument following the ~to~ modifier keyword.
+
+#+NAME: mrosetta-parse-modifier-uppercase-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(uppercase . upcase) mrosetta-mlsyntax-modifiers)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-modifier-uppercase-example
+#+BEGIN_SRC text
+(word to uppercase)
+#+END_SRC
+**** Lowercase
+Transform captured elements to lowercase format.
+
+To do so, use the ~lowercase~ argument following the ~to~ modifier keyword.
+
+#+NAME: mrosetta-parse-modifier-lowercase-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(lowercase . downcase) mrosetta-mlsyntax-modifiers)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-modifier-lowercase-example
+#+BEGIN_SRC text
+(word to lowercase)
+#+END_SRC
+**** Modifier Argument Parser
+All modifier contextual arguments are handled by a central modifier parser.
+
+#+NAME: mrosetta-parse-modifier
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-modifier ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the modifier symbol from :right arg within ARGS into the MLEXPRESSION instance in context."
+  (let ((modifier-symbol (plist-get args :right)))
+    (when (eq modifier-symbol nil)
+      (error "Metalanguage syntax error: Modifier expression without contextual argument symbol"))
+    (setf (slot-value mlexpression 'modifier) modifier-symbol))
+  (plist-put args :right nil))
+#+END_SRC
+
+The metalanguage defines the modifier context through the ~to~ keyword followed by the contextual arguments listed above.
+
+#+NAME: mrosetta-parse-modifier-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(to . mrosetta-parse-modifier) mrosetta-mlsyntax)
 #+END_SRC
 *** Optionality
 Specify whether the encompassing expression should be considered as an optional, or required match.
@@ -704,6 +814,34 @@ A usage example is as follows:
 #+NAME: mrosetta-parse-key-example
 #+BEGIN_SRC text
 (word as a_property)
+#+END_SRC
+*** Contextuality
+Specify whether the encompassing expression should be considered as contextual. As noted above, contextual expressions are matched but never included in structured semantic output.
+
+Context is considered as semantically insignificant text occurring before and after the semantic match itself.
+
+While this text is unimportant for structured semantics, it remains an intrinsic part of the human-readable form. This provides an ability to regenerate the human-readable text with updated semantic information from a machine-generated source. I.e., it enables true two-way trans-operability between the human and machine forms.
+
+#+NAME: mrosetta-parse-contextuality
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-contextuality ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse expression contextuality into the MLEXPRESSION instance in context. This function utilizes no ARGS."
+  (setf (slot-value mlexpression 'is-contextual) t)
+  args)
+#+END_SRC
+
+The metalanguage defines this expression through the ~contextual~ keyword.
+
+#+NAME: mrosetta-parse-contextuality-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(contextual . mrosetta-parse-contextuality) mrosetta-mlsyntax)
+#+END_SRC
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-contextuality-example
+#+BEGIN_SRC text
+(contextual ":" suffixed paragraph)
 #+END_SRC
 * Contexts
 ** Org
