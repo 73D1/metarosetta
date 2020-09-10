@@ -265,7 +265,7 @@ Match only uppercase words.
 
 #+NAME: is-uppercase
 #+BEGIN_SRC emacs-lisp
-(is-upparcase
+(is-uppercase
  :initform 'nil
  :documentation "Specifies whether the encompassing expression matches only uppercase words. Either non-nil or nil."
  :reader mrosetta-is-uppercase)

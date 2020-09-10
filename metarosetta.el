@@ -95,7 +95,7 @@
     :type (or null string)
     :documentation "The property key to which the expression output value is assigned, if any. Either a string or nil."
     :reader mrosetta-key)
-   (is-upparcase
+   (is-uppercase
     :initform 'nil
     :documentation "Specifies whether the encompassing expression matches only uppercase words. Either non-nil or nil."
     :reader mrosetta-is-uppercase)
