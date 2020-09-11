@@ -222,7 +222,7 @@
          (rbase (slot-value mlexpression 'rbase)))
     (when (eq substring-quote nil)
       (error "Metalanguage syntax error: Substring match expression without quoted content"))
-    (setf (slot-value mlexpression 'rmatch) ;; this should get safely escaped
+    (setf (slot-value mlexpression 'rmatch)
           (concat "\(?:"
                   "\(?:" rsubstring-quote "\)?" rbase "\(?:" rsubstring-quote "\(?" rbase "\)?" "\)+"
                   "\|"
