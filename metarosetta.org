@@ -40,7 +40,7 @@ For details and language specification, please refer to the original package doc
 * The Metalanguage
 The metalanguage specification and parser.
 
-** The Expression
+** The Expression Object
 An entity defining a particular expression. Using the metalanguage syntax as input, it constructs all underlying logic to parse textual input and structures to map semantic information to machine-readable output.
 
 Designed as an inherently recursive fractal object.
@@ -342,16 +342,6 @@ A modifier property is defined as a symbol referencing a stored function capable
  :documentation "Specifies a symbol referencing a stored modifier function, if any. Either a symbol or nil."
  :reader mrosetta-modifier)
 #+END_SRC
-**** Plurality
-If the expression defines a plural match, then the output value is in list form and this property is non-nil.
-
-#+NAME: is-plural
-#+BEGIN_SRC emacs-lisp
-(is-plural
- :initform 'nil
- :documentation "Specifies whether the encompassing expression matches plural values or just a single one. Either nil or non-nil."
- :reader mrosetta-is-plural)
-#+END_SRC
 **** Optionality
 Specifies whether the entire expression and its fractals within (if any) are optional in presence.
 
@@ -371,6 +361,16 @@ Specifies whether the encompassing expression should be considered as contextual
  :initform 'nil
  :documentation "Specifies whether the encompassing expression should be considered as contextual only. Either non-nil or nil."
  :reader mrosetta-is-contextual)
+#+END_SRC
+**** Plurality
+If the expression defines a plural match, then the output value is in list form and this property is non-nil.
+
+#+NAME: is-plural
+#+BEGIN_SRC emacs-lisp
+(is-plural
+ :initform 'nil
+ :documentation "Specifies whether the encompassing expression matches plural values or just a single one. Either nil or non-nil."
+ :reader mrosetta-is-plural)
 #+END_SRC
 *** Class Definition
 The /expression/ class is defined below, containing all the properties listed above.
@@ -400,13 +400,13 @@ The /expression/ class is defined below, containing all the properties listed ab
    <<match-substring>>
    <<match-literal>>
    <<modifier>>
-   <<is-plural>>
    <<is-optional>>
    <<is-contextual>>
+   <<is-plural>>
   )
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
 #+END_SRC
-** The Specification
+** Language Specification
 The purpose of the language is to facilitate expressions which unambiguously define a translation protocol between human-readable text and machine-digestible data structures, with the semantics completely preserved, based on an arbitrarily defined pattern of human input within a specific context.
 
 All keywords within the specification are stored as symbols which map to their respective parse functions.
@@ -750,7 +750,8 @@ All modifier contextual arguments are handled by a central modifier parser.
   (let ((modifier-symbol (plist-get args :right)))
     (when (eq modifier-symbol nil)
       (error "Metalanguage syntax error: Modifier expression without contextual argument symbol"))
-    (setf (slot-value mlexpression 'modifier) modifier-symbol))
+    (setf (slot-value mlexpression 'modifier)
+          (cdr (assq modifier-symbol mrosetta-mlsyntax-modifiers))))
   (plist-put args :right nil))
 #+END_SRC
 
@@ -843,10 +844,80 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (contextual ":" suffixed paragraph)
 #+END_SRC
+*** Collections
+Instead of matching a single occurrence of a complex expression, repetitively capture the corresponding expression within input text containing the recurring pattern, while structuring the resulting match as a list.
+
+Collections are essential in matching of targeted semantics from within enumerated clauses of text.
+
+The metalanguage defines collection expressions through two keywords: ~list~ and ~of~.
+
+The ~list~ specifies the type of the encompassing /parent/ expression, while the ~of~ designates its fractal content.
+
+#+NAME: mrosetta-parse-list
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-list ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the list epxression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'extype) :fractal)
+  (setf (slot-value mlexpression 'is-plural) t)
+  args)
+#+END_SRC
+
+#+NAME: mrosetta-parse-list-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(list . mrosetta-parse-list) mrosetta-mlsyntax)
+#+END_SRC
+
+#+NAME: mrosetta-parse-of
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse-of ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the sub-expression from :right arg within ARGS into the MLEXPRESSION instance in context."
+  (let ((sub-expression (plist-get args :right)))
+    (when (or (eq sub-expression nil) (nlistp sub-expression))
+      (error "Metalanguage syntax error: Sub-expression assignment without contextual expression"))
+    (mrosetta-parse mlexpression sub-expression))
+  (plist-put args :right nil))
+#+END_SRC
+
+#+NAME: mrosetta-parse-of-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes
+(push '(of . mrosetta-parse-of) mrosetta-mlsyntax)
+#+END_SRC
+** Expression Parsing
+Parse the metalanguage-specified definition within an expression instance.
+
+#+NAME: mrosetta-parse
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-parse ((mlexpression mrosetta-mlexpression) &optional sub-definition)
+  "Parse the metalanguage-specified definition within the MLEXPRESSION instance. Optionally, parse the explicitly-set SUB-DEFINITION instead."
+  (let ((mldefinition (if (eq sub-definition nil)
+                          (copy-tree (slot-value mlexpression 'mldefinition))
+                        (copy-tree sub-definition)))
+        (larg nil)
+        (element nil)
+        (rarg nil))
+    (while (> (length mldefinition) 0)
+      (setq element (pop mldefinition)
+            rarg (car mldefinition))
+      (when (symbolp element)
+        ;; The element is a metalanguage keyword, so lookup the corresponding function and parse accordingly
+        (let ((leftout-args (funcall (cdr (assq element mrosetta-mlsyntax)) mlexpression :left larg :right rarg)))
+          (setq larg nil)
+          (when (eq (plist-get leftout-args :right) nil)
+            (pop mldefinition))))
+      (when (and (listp element) (> (length element) 0))
+        ;; The element is a nested fractal expression
+        (let ((fractal-mlexpression (mrosetta-mlexpression :mldefinition element)))
+          (setf (slot-value mlexpression 'fractals) `(,@(slot-value mlexpression 'fractals) ,fractal-mlexpression))
+          (mrosetta-parse fractal-mlexpression))
+        (setq larg nil))
+      (when (stringp element)
+        ;; The element is a quoted string, so just pass it along
+        (setq larg element)))))
+#+END_SRC
 * Contexts
 ** Org
 * Connectors
-** Coda
+** REST
 * Registration
 #+NAME: registration
 #+BEGIN_SRC emacs-lisp :tangle yes

@@ -128,10 +128,6 @@
     :type (or null symbol)
     :documentation "Specifies a symbol referencing a stored modifier function, if any. Either a symbol or nil."
     :reader mrosetta-modifier)
-   (is-plural
-    :initform 'nil
-    :documentation "Specifies whether the encompassing expression matches plural values or just a single one. Either nil or non-nil."
-    :reader mrosetta-is-plural)
    (is-optional
     :initform 'nil
     :documentation "Specifies whether the encompassing expression is optional to match within input text. Either non-nil or nil."
@@ -140,6 +136,10 @@
     :initform 'nil
     :documentation "Specifies whether the encompassing expression should be considered as contextual only. Either non-nil or nil."
     :reader mrosetta-is-contextual)
+   (is-plural
+    :initform 'nil
+    :documentation "Specifies whether the encompassing expression matches plural values or just a single one. Either nil or non-nil."
+    :reader mrosetta-is-plural)
   )
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
 
@@ -255,7 +255,8 @@
   (let ((modifier-symbol (plist-get args :right)))
     (when (eq modifier-symbol nil)
       (error "Metalanguage syntax error: Modifier expression without contextual argument symbol"))
-    (setf (slot-value mlexpression 'modifier) modifier-symbol))
+    (setf (slot-value mlexpression 'modifier)
+          (cdr (assq modifier-symbol mrosetta-mlsyntax-modifiers))))
   (plist-put args :right nil))
 
 (push '(to . mrosetta-parse-modifier) mrosetta-mlsyntax)
@@ -283,6 +284,51 @@
   args)
 
 (push '(contextual . mrosetta-parse-contextuality) mrosetta-mlsyntax)
+
+(cl-defmethod mrosetta-parse-list ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the list epxression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'extype) :fractal)
+  (setf (slot-value mlexpression 'is-plural) t)
+  args)
+
+(push '(list . mrosetta-parse-list) mrosetta-mlsyntax)
+
+(cl-defmethod mrosetta-parse-of ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the sub-expression from :right arg within ARGS into the MLEXPRESSION instance in context."
+  (let ((sub-expression (plist-get args :right)))
+    (when (or (eq sub-expression nil) (nlistp sub-expression))
+      (error "Metalanguage syntax error: Sub-expression assignment without contextual expression"))
+    (mrosetta-parse mlexpression sub-expression))
+  (plist-put args :right nil))
+
+(push '(of . mrosetta-parse-of) mrosetta-mlsyntax)
+
+(cl-defmethod mrosetta-parse ((mlexpression mrosetta-mlexpression) &optional sub-definition)
+  "Parse the metalanguage-specified definition within the MLEXPRESSION instance. Optionally, parse the explicitly-set SUB-DEFINITION instead."
+  (let ((mldefinition (if (eq sub-definition nil)
+                          (copy-tree (slot-value mlexpression 'mldefinition))
+                        (copy-tree sub-definition)))
+        (larg nil)
+        (element nil)
+        (rarg nil))
+    (while (> (length mldefinition) 0)
+      (setq element (pop mldefinition)
+            rarg (car mldefinition))
+      (when (symbolp element)
+        ;; The element is a metalanguage keyword, so lookup the corresponding function and parse accordingly
+        (let ((leftout-args (funcall (cdr (assq element mrosetta-mlsyntax)) mlexpression :left larg :right rarg)))
+          (setq larg nil)
+          (when (eq (plist-get leftout-args :right) nil)
+            (pop mldefinition))))
+      (when (and (listp element) (> (length element) 0))
+        ;; The element is a nested fractal expression
+        (let ((fractal-mlexpression (mrosetta-mlexpression :mldefinition element)))
+          (setf (slot-value mlexpression 'fractals) `(,@(slot-value mlexpression 'fractals) ,fractal-mlexpression))
+          (mrosetta-parse fractal-mlexpression))
+        (setq larg nil))
+      (when (stringp element)
+        ;; The element is a quoted string, so just pass it along
+        (setq larg element)))))
 
 (provide 'metarosetta)
 
