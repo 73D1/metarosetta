@@ -58,16 +58,26 @@
     :type number
     :documentation "The regex matching group key for the encompassing expression instance."
     :reader mrosetta-regex-key)
+   (rinstance
+    :type string
+    :documentation "The compiled regular expression matching a single instance of a possibly plural-matching expression."
+    :reader mrosetta-rinstance)
+   (rinstance-key
+    :type number
+    :documentation "The regex group key for matching a single instance of a possibly plural-matching metalanguage expression in context."
+    :reader mrosetta-rinstance-key)
    (rbase
     :type string
     :documentation "The regular expression used as a foundational base in compilation of the match-extracting regular expression."
     :reader mrosetta-rbase)
    (rmatch
-    :type string
+    :initform 'nil
+    :type (or null string)
     :documentation "The regular expression of the encompassing expression's semantic match."
     :reader mrosetta-rmatch)
    (rmatch-key
-    :type number
+    :initform 'nil
+    :type (or null number)
     :documentation "The regex group key for the encompassing expression's output value match."
     :reader mrosetta-rmatch-key)
    (rprefix
@@ -151,7 +161,7 @@
     (when (eq literal-quote nil)
       (error "Metalanguage syntax error: Literal expression without quoted content"))
     (setf (slot-value mlexpression 'extype) :literal)
-    (setf (slot-value mlexpression 'rbase) literal-quote) ;; this should get safely escaped
+    (setf (slot-value mlexpression 'rbase) (regexp-quote literal-quote))
     (setf (slot-value mlexpression 'match-literal) literal-quote))
   (plist-put args :right nil))
 
@@ -207,15 +217,16 @@
 
 (cl-defmethod mrosetta-parse-substring ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse quoted text from :right arg within ARGS as matching element substring into the MLEXPRESSION instance in context."
-  (let ((substring-quote (plist-get args :right))
-        (rbase (slot-value mlexpression 'rbase)))
+  (let* ((substring-quote (plist-get args :right))
+         (rsubstring-quote (regexp-quote substring-quote))
+         (rbase (slot-value mlexpression 'rbase)))
     (when (eq substring-quote nil)
       (error "Metalanguage syntax error: Substring match expression without quoted content"))
-    (setf (slot-value mlexpression 'rbase) ;; this should get safely escaped
+    (setf (slot-value mlexpression 'rmatch) ;; this should get safely escaped
           (concat "\(?:"
-                  "\(?:" substring-quote "\)?" rbase "\(?:" substring-quote "\(?" rbase "\)?" "\)+"
+                  "\(?:" rsubstring-quote "\)?" rbase "\(?:" rsubstring-quote "\(?" rbase "\)?" "\)+"
                   "\|"
-                  "\(?:" "\(?:" rbase "\)?" substring-quote "\)+" rbase "\(?:" substring-quote "\)?"
+                  "\(?:" "\(?:" rbase "\)?" rsubstring-quote "\)+" rbase "\(?:" rsubstring-quote "\)?"
                   "\)"))
     (setf (slot-value mlexpression 'match-substring) substring-quote))
   (plist-put args :right nil))
@@ -227,7 +238,7 @@
   (let ((prefix-quote (plist-get args :left)))
     (when (eq prefix-quote nil)
       (error "Metalanguage syntax error: Prefix match expression without quoted content"))
-    (setf (slot-value mlexpression 'rprefix) prefix-quote) ;; this should get safely escaped
+    (setf (slot-value mlexpression 'rprefix) (regexp-quote prefix-quote))
     (setf (slot-value mlexpression 'match-prefix) prefix-quote))
   (plist-put args :left nil))
 
@@ -238,7 +249,7 @@
   (let ((suffix-quote (plist-get args :left)))
     (when (eq suffix-quote nil)
       (error "Metalanguage syntax error: Suffix match expression without quoted content"))
-    (setf (slot-value mlexpression 'rsuffix) suffix-quote) ;; this should get safely escaped
+    (setf (slot-value mlexpression 'rsuffix) (regexp-quote suffix-quote))
     (setf (slot-value mlexpression 'match-suffix) suffix-quote))
   (plist-put args :left nil))
 
@@ -287,7 +298,6 @@
 
 (cl-defmethod mrosetta-parse-list ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the list epxression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (setf (slot-value mlexpression 'extype) :fractal)
   (setf (slot-value mlexpression 'is-plural) t)
   args)
 
@@ -322,13 +332,53 @@
             (pop mldefinition))))
       (when (and (listp element) (> (length element) 0))
         ;; The element is a nested fractal expression
-        (let ((fractal-mlexpression (mrosetta-mlexpression :mldefinition element)))
+        (setf (slot-value mlexpression 'extype) :fractal)
+        (let ((fractal-mlexpression (mrosetta-mlexpression :mldefinition element :rkeychain (slot-value mlexpression 'rkeychain))))
           (setf (slot-value mlexpression 'fractals) `(,@(slot-value mlexpression 'fractals) ,fractal-mlexpression))
           (mrosetta-parse fractal-mlexpression))
         (setq larg nil))
       (when (stringp element)
         ;; The element is a quoted string, so just pass it along
         (setq larg element)))))
+
+(cl-defmethod mrosetta-compile ((mlexpression mrosetta-mlexpression))
+  "Compile the MLEXPRESSION instance into a regular expression structure."
+  (let* ((rkeychain (slot-value mlexpression 'rkeychain))
+         (regex)
+         (regex-key (mrosetta-generate-regex-key rkeychain))
+         (rinstance)
+         (rinstance-key (mrosetta-generate-regex-key rkeychain))
+         (rmatch (slot-value mlexpression 'rmatch))
+         (rmatch-key (mrosetta-generate-regex-key rkeychain))
+         (rprefix (slot-value mlexpression 'rprefix))
+         (rsuffix (slot-value mlexpression 'rsuffix))
+         (is-optional (slot-value mlexpression 'is-optional))
+         (is-plural (slot-value mlexpression 'is-plural)))
+    (if (eq (slot-value mlexpression 'extype) :fractal)
+        ;; Fractal Expressions cannot have end-matches
+        (when rmatch
+          (error "Metalanguage syntax error: End-matching expressions, like words or paragraphs, must be defined with parentheses"))
+        ;; Recursively compile all nested fractal expression instances
+        (let ((fractals (slot-value mlexpression 'fractals)))
+          (dolist (fractal fractals rmatch)
+            (setq rmatch (concat rmatch "[[:blank:]]+" (mrosetta-compile fractal)))))
+      ;; Literal or end Match
+      (when (eq rmatch nil)
+        (setq rmatch (slot-value mlexpression 'rbase))))
+    ;; Compile the total match, instance and expression-encompassing regular expressions
+    (setq rmatch (concat "\(?" rmatch-key ":" rmatch "\)"))
+    (setq rinstance (concat "\(?" rinstance-key ":" rprefix rmatch rsuffix "\)"))
+    (setq regex (concat "\(?" regex-key ":"
+                        rinstance
+                        (when is-optional "?")
+                        (when is-plural "+")
+                        "\)"))
+    (setf (slot-value mlexpression 'rmatch-key) rmatch-key
+          (slot-value mlexpression 'rmatch) rmatch
+          (slot-value mlexpression 'rinstance-key) rinstance-key
+          (slot-value mlexpression 'rinstance) rinstance
+          (slot-value mlexpression 'regex-key) regex-key
+          (slot-value mlexpression 'regex) regex)))
 
 (provide 'metarosetta)
 
