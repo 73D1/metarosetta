@@ -961,7 +961,7 @@ Compile the entire fractal tree within the root expression instance into a regul
           (error "Metalanguage syntax error: End-matching expressions, like words or paragraphs, must be defined with parentheses"))
         ;; Recursively compile all nested fractal expression instances
         (let ((fractals (slot-value mlexpression 'fractals)))
-          (dolist (fractal fractals rmatch)
+          (dolist (fractal fractals)
             (setq rmatch (concat rmatch "[[:blank:]]+" (mrosetta-compile fractal)))))
       ;; Literal or end Match
       (when (eq rmatch nil)
@@ -971,15 +971,56 @@ Compile the entire fractal tree within the root expression instance into a regul
     (setq rinstance (concat "\(?" rinstance-key ":" rprefix rmatch rsuffix "\)"))
     (setq regex (concat "\(?" regex-key ":"
                         rinstance
-                        (when is-optional "?")
                         (when is-plural "+")
-                        "\)"))
+                        "\)"
+                        (when is-optional "?")))
     (setf (slot-value mlexpression 'rmatch-key) rmatch-key
           (slot-value mlexpression 'rmatch) rmatch
           (slot-value mlexpression 'rinstance-key) rinstance-key
           (slot-value mlexpression 'rinstance) rinstance
           (slot-value mlexpression 'regex-key) regex-key
           (slot-value mlexpression 'regex) regex)))
+#+END_SRC
+* Text Processing
+Process human-readable source text and output the semantic data structure, as defined by the metalanguage expression in context.
+
+#+NAME: mrosetta-process
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-process ((mlexpression mrosetta-mlexpression) htext)
+  "Process human-readable text within the HTEXT string and return the semantic data structure as defined by the MLEXPRESSION instance."
+  (let ((sdata '()))
+    (save-match-data
+      (and (string-match (mrosetta-regex mlexpression) htext)
+           ;; Found match for the entirety of the expression
+           (let ((mtext (match-string (mrosetta-regex-key mlexpression) htext))
+                 (pos))
+             (save-match-data
+               ;; Iterate over all instance occurrences within the matching expression text
+               (while (string-match (mrosetta-rinstance mlexpression) mtext pos)
+                 (setq pos (match-end 0))
+                 ;; Process the exact match as defined by the expression
+                 (let ((instance-sdata)
+                       (match (match-string (mrosetta-rmatch-key mlexpression) mtext)))
+                   ;; Cases where the expression is a :fractal
+                   (when (eq (mrosetta-extype mlexpression) :fractal)
+                     ;; Recursively process all fractals within
+                     (let ((fractals (mrosetta-fractals mlexpression)))
+                       (dolist (fractal fractals)
+                         (let ((fractal-sdata (mrosetta-process fractal (match-string (mrosetta-regex-key fractal) mtext))))
+                           (when fractal-sdata
+                             (setq instance-sdata `(,@instance-sdata ,fractal-sdata)))))))
+                   ;; Cases where the expression is a :match
+                   (when (and (eq (mrosetta-extype mlexpression) :match)
+                              (not (mrosetta-is-contextual mlexpression)))
+                     ;; Just store the semantic end-match
+                     (setq instance-sdata match))
+                   (setq sdata `(,@sdata ,instance-sdata))))))))
+    (when (> (length sdata) 0)
+      ;; Splice instance data in case of a singular expression
+      (when (not (mrosetta-is-plural mlexpression))
+        (setq sdata (car sdata)))
+      ;; Return the structured semantic data object
+      `(,(or (mrosetta-key mlexpression) :nokey) . ,sdata))))
 #+END_SRC
 * Contexts
 ** Org
