@@ -31,7 +31,6 @@
   (
    (mldefinition
     :initarg :mldefinition
-    :initform (error "Cannot create an expression without a definition!")
     :type list
     :documentation "The metalanguage-specified definition of the expression in context."
     :reader mrosetta-mldefinition)
@@ -90,6 +89,16 @@
     :type (or null string)
     :documentation "The regular expression matching a specified suffix of the encompassing expression instance. Either a regex string or nil."
     :reader mrosetta-rsuffix)
+   (left-rboundary
+    :initform 'nil
+    :type (or null string)
+    :documentation "The left regex-specific boundary defining the beginning of the match."
+    :reader mrosetta-left-rboundary)
+   (right-rboundary
+    :initform 'nil
+    :type (or null string)
+    :documentation "The right regex-specific boundary defining the end of the match."
+    :reader mrosetta-right-rboundary)
    (rbuffer
     :initform "[[:blank:]]*"
     :type string
@@ -105,7 +114,7 @@
     :reader mrosetta-right-rbuffer-key)
    (key
     :initform 'nil
-    :type (or null string)
+    :type (or null symbol)
     :documentation "The property key to which the expression output value is assigned, if any. Either a string or nil."
     :reader mrosetta-key)
    (is-uppercase
@@ -173,14 +182,16 @@
 (cl-defmethod mrosetta-parse-word ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
   (setf (slot-value mlexpression 'extype) :match)
+  (setf (slot-value mlexpression 'left-rboundary) "\\<")
   (setf (slot-value mlexpression 'rbase) "[[:word:]]+")
+  (setf (slot-value mlexpression 'right-rboundary) "\\>")
   args)
 
 (push '(word . mrosetta-parse-word) mrosetta-mlsyntax)
 
 (cl-defmethod mrosetta-parse-word-uppercase ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse an uppercase word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (setf (slot-value mlexpression 'extype) :match)
+  (mrosetta-parse-word mlexpression args)
   (setf (slot-value mlexpression 'rbase) "[A-Z0-9]+")
   (setf (slot-value mlexpression 'is-uppercase) t)
   args)
@@ -189,7 +200,7 @@
 
 (cl-defmethod mrosetta-parse-word-capitalized ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a capitalized word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (setf (slot-value mlexpression 'extype) :match)
+  (mrosetta-parse-word mlexpression args)
   (setf (slot-value mlexpression 'rbase) "[A-Z0-9][a-z0-9]+")
   (setf (slot-value mlexpression 'is-capitalized) t)
   args)
@@ -226,11 +237,11 @@
     (when (eq substring-quote nil)
       (error "Metalanguage syntax error: Substring match expression without quoted content"))
     (setf (slot-value mlexpression 'rmatch)
-          (concat "\(?:"
-                  "\(?:" rsubstring-quote "\)?" rbase "\(?:" rsubstring-quote "\(?" rbase "\)?" "\)+"
-                  "\|"
-                  "\(?:" "\(?:" rbase "\)?" rsubstring-quote "\)+" rbase "\(?:" rsubstring-quote "\)?"
-                  "\)"))
+          (concat "\\(?:"
+                  "\\(?:" rsubstring-quote "\\)?" rbase "\\(?:" rsubstring-quote "\\(?" rbase "\\)?" "\\)+"
+                  "\\|"
+                  "\\(?:" "\\(?:" rbase "\\)?" rsubstring-quote "\\)+" rbase "\\(?:" rsubstring-quote "\\)?"
+                  "\\)"))
     (setf (slot-value mlexpression 'match-substring) substring-quote))
   (plist-put args :right nil))
 
@@ -355,6 +366,8 @@
          (rmatch-key (mrosetta-generate-regex-key rkeychain))
          (rprefix (slot-value mlexpression 'rprefix))
          (rsuffix (slot-value mlexpression 'rsuffix))
+         (left-rboundary (slot-value mlexpression 'left-rboundary))
+         (right-rboundary (slot-value mlexpression 'right-rboundary))
          (rbuffer (slot-value mlexpression 'rbuffer))
          (left-rbuffer-key (mrosetta-generate-regex-key rkeychain))
          (right-rbuffer-key (mrosetta-generate-regex-key rkeychain))
@@ -372,22 +385,22 @@
       (when (eq rmatch nil)
         (setq rmatch (slot-value mlexpression 'rbase))))
     ;; Compile the total match, instance and expression-encompassing regular expressions
-    (setq rmatch (concat "\(?" rmatch-key ":" rmatch "\)"))
-    (setq rinstance (concat "\(?" rinstance-key ":"
-                            "\(?" left-rbuffer-key ":" rbuffer "\)"
-                            rprefix
+    (setq rmatch (concat "\\(?" (number-to-string rmatch-key) ":" rmatch "\\)"))
+    (setq rinstance (concat "\\(?" (number-to-string rinstance-key) ":"
+                            "\\(?" (number-to-string left-rbuffer-key) ":" rbuffer "\\)"
+                            (or rprefix left-rboundary)
                             rmatch
-                            rsuffix
-                            "\(?" right-rbuffer-key ":" rbuffer "\)"
-                            "\)"))
-    (setq regex (concat "\(?" regex-key ":"
+                            (or rsuffix right-rboundary)
+                            "\\(?" (number-to-string right-rbuffer-key) ":" rbuffer "\\)"
+                            "\\)"))
+    (setq regex (concat "\\(?" (number-to-string regex-key) ":"
                         rinstance
                         (when is-plural "+")
-                        "\)"
+                        "\\)"
                         (when is-optional "?")))
     (setf (slot-value mlexpression 'rmatch-key) rmatch-key
           (slot-value mlexpression 'rmatch) rmatch
-          (slot-value mlexpression 'left-rbufer-key) left-rbuffer-key
+          (slot-value mlexpression 'left-rbuffer-key) left-rbuffer-key
           (slot-value mlexpression 'right-rbuffer-key) right-rbuffer-key
           (slot-value mlexpression 'rinstance-key) rinstance-key
           (slot-value mlexpression 'rinstance) rinstance
@@ -396,7 +409,8 @@
 
 (cl-defmethod mrosetta-process ((mlexpression mrosetta-mlexpression) htext)
   "Process human-readable text within the HTEXT string and return the semantic data structure as defined by the MLEXPRESSION instance."
-  (let ((exdata '()))
+  (let ((exdata '())
+        (case-fold-search nil))
     (save-match-data
       (and (string-match (mrosetta-regex mlexpression) htext)
            ;; Found match for the entirety of the expression
@@ -419,8 +433,12 @@
                    ;; Cases where the expression is a :match
                    (when (and (eq (mrosetta-extype mlexpression) :match)
                               (not (mrosetta-is-contextual mlexpression)))
-                     ;; Just store the semantic end-match
-                     (setq instance-exdata (match-string (mrosetta-rmatch-key mlexpression) extext)))
+                     ;; Just store the semantic end-match, modified if defined as such
+                     (let ((match (match-string (mrosetta-rmatch-key mlexpression) extext))
+                           (modifier (mrosetta-modifier mlexpression)))
+                       (when modifier
+                         (setq match (funcall modifier match)))
+                       (setq instance-exdata match)))
                    (setq exdata `(,@exdata ,instance-exdata))))))))
     (when (> (length exdata) 0)
       ;; Splice instance data in case of a singular expression
