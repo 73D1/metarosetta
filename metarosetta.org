@@ -397,6 +397,18 @@ This slot is only used in ~:literal~ expressions.
  :documentation "Specifies the literal string that the expression maches exclusively. Either a string or nill."
  :reader mrosetta-match-literal)
 #+END_SRC
+***** Contextual
+Elastically match a region of text depending on neighboring elements.
+
+This slot is only used in ~paragraph~ ~:match~ expressions since paragraphs match any and all text, either based on specific criteria, such as explicit boundaries, or on neighboring matches which act as contextual criteria.
+
+#+NAME: is-contextual
+#+BEGIN_SRC emacs-lisp
+(is-contextual
+ :initform 'nil
+ :documentation "Specifies whether the encompassing expression is matched elastically depending on neighboring elements. Either non-nil or nil."
+ :reader mrosetta-is-contextual)
+#+END_SRC
 **** Modifier
 Modifiers are useful when matched text needs to be formatted and /normalized/ before being structured within the machine-digestible output.
 
@@ -420,15 +432,15 @@ Specifies whether the entire expression and its fractals within (if any) are opt
  :documentation "Specifies whether the encompassing expression is optional to match within input text. Either non-nil or nil."
  :reader mrosetta-is-optional)
 #+END_SRC
-**** Contextuality
-Specifies whether the encompassing expression should be considered as contextual. Contextual expressions are matched but never included in structured semantic output.
+**** Ignorables
+Specifies whether the encompassing expression should be disregarded in structured output. Ignorable expressions are matched but never included in structured semantic output.
 
-#+NAME: is-contextual
+#+NAME: should-ignore
 #+BEGIN_SRC emacs-lisp
-(is-contextual
+(should-ignore
  :initform 'nil
- :documentation "Specifies whether the encompassing expression should be considered as contextual only. Either non-nil or nil."
- :reader mrosetta-is-contextual)
+ :documentation "Specifies whether the encompassing expression should be matched but disregarded in output. Either non-nil or nil."
+ :reader mrosetta-should-ignore)
 #+END_SRC
 **** Plurality
 If the expression defines a plural match, then the output value is in list form and this property is non-nil.
@@ -472,9 +484,10 @@ The /expression/ class is defined below, containing all the properties listed ab
    <<match-suffix>>
    <<match-substring>>
    <<match-literal>>
+   <<is-contextual>>
    <<modifier>>
    <<is-optional>>
-   <<is-contextual>>
+   <<should-ignore>>
    <<is-plural>>
   )
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
@@ -575,7 +588,7 @@ Match only uppercase words.
 #+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
 (cl-defmethod mrosetta-parse-word-uppercase ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse an uppercase word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (mrosetta-parse-word mlexpression args)
+  (setq args (apply 'mrosetta-parse-word mlexpression args))
   (setf (slot-value mlexpression 'rbase) "[A-Z0-9]+")
   (setf (slot-value mlexpression 'is-uppercase) t)
   args)
@@ -607,7 +620,7 @@ Match only capitalized words.
 #+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
 (cl-defmethod mrosetta-parse-word-capitalized ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a capitalized word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (mrosetta-parse-word mlexpression args)
+  (setq args (apply 'mrosetta-parse-word mlexpression args))
   (setf (slot-value mlexpression 'rbase) "[A-Z0-9][a-z0-9]+")
   (setf (slot-value mlexpression 'is-capitalized) t)
   args)
@@ -639,8 +652,9 @@ Instead of a single value, capture all value occurrences matching defined criter
 #+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
 (cl-defmethod mrosetta-parse-word-plurality ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a plural words expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setq args (apply 'mrosetta-parse-word mlexpression args))
   (setf (slot-value mlexpression 'is-plural) t)
-  (mrosetta-parse-word mlexpression args))
+  args)
 #+END_SRC
 
 #+RESULTS: mrosetta-parse-word-plurality
@@ -672,7 +686,7 @@ A paragraph is considered all text within specified boundaries. If no boundaries
 (cl-defmethod mrosetta-parse-paragraph ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a paragraph epxression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
   (setf (slot-value mlexpression 'extype) :match)
-  (setf (slot-value mlexpression 'rbase) ".+")
+  (setf (slot-value mlexpression 'rbase) (concat ".+?"))
   args)
 #+END_SRC
 
@@ -705,8 +719,9 @@ Note that this construct only makes sense if paragraphs are clearly bounded.
 #+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
 (cl-defmethod mrosetta-parse-paragraph-plurality ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a plural paragraph expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setq args (apply 'mrosetta-parse-paragraph mlexpression args))
   (setf (slot-value mlexpression 'is-plural) t)
-  (mrosetta-parse-paragraph mlexpression args))
+  args)
 #+END_SRC
 
 #+RESULTS: mrosetta-parse-paragraph-plurality
@@ -743,7 +758,7 @@ Match only elements containing specific characters or content.
       (error "Metalanguage syntax error: Substring match expression without quoted content"))
     (setf (slot-value mlexpression 'rmatch)
           (concat "\\(?:"
-                  "\\(?:" rsubstring-quote "\\)?" rbase "\\(?:" rsubstring-quote "\\(?" rbase "\\)?" "\\)+"
+                  "\\(?:" rsubstring-quote "\\)?" rbase "\\(?:" rsubstring-quote "\\(?:" rbase "\\)?" "\\)+"
                   "\\|"
                   "\\(?:" "\\(?:" rbase "\\)?" rsubstring-quote "\\)+" rbase "\\(?:" rsubstring-quote "\\)?"
                   "\\)"))
@@ -840,6 +855,36 @@ A usage example is as follows:
 #+NAME: mrosetta-parse-suffix-example
 #+BEGIN_SRC text
 (";" suffixed word)
+#+END_SRC
+**** Contextual
+Match elements based on contextual criteria of neighboring matches. Note that a contextual specifier is only applicable to ~paragraph~ expressions.
+
+#+NAME: mrosetta-parse-contextual
+#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+(cl-defmethod mrosetta-parse-contextual ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the contextual specifier into the MLEXPRESSION instance in context. This function utilizes no ARGS."
+  (setf (slot-value mlexpression 'is-contextual) t)
+  args)
+#+END_SRC
+
+#+RESULTS: mrosetta-parse-contextual
+: mrosetta-parse-contextual
+
+The metalanguage defines this expression through the ~contextual~ keyword.
+
+#+NAME: mrosetta-parse-contextual-symbol
+#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+(push '(contextual . mrosetta-parse-contextual) mrosetta-mlsyntax)
+#+END_SRC
+
+#+RESULTS: mrosetta-parse-contextual-symbol
+: ((contextual . mrosetta-parse-contextual) (ignorable . mrosetta-parse-ignorable) (of . mrosetta-parse-of) (list . mrosetta-parse-list) (contextual . mrosetta-parse-contextuality) (as . mrosetta-parse-key) (optional . mrosetta-parse-optionality) (to . mrosetta-parse-modifier) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
+
+A usage example is as follows:
+
+#+NAME: mrosetta-parse-contextual-example
+#+BEGIN_SRC text
+(contextual paragraph)
 #+END_SRC
 *** Modifiers
 Modify captured elements before structured output.
@@ -987,39 +1032,39 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (word as a_property)
 #+END_SRC
-*** Contextuality
-Specify whether the encompassing expression should be considered as contextual. As noted above, contextual expressions are matched but never included in structured semantic output.
+*** Ignorables
+Specify whether the encompassing expression should be ignored from structured output. As noted above, ignorable expressions are matched but never included in structured semantic output.
 
-Context is considered as semantically insignificant text occurring before and after the semantic match itself.
+Ignorables are considered as semantically insignificant text occurring before and after the semantic match itself.
 
 While this text is unimportant for structured semantics, it remains an intrinsic part of the human-readable form. This provides an ability to regenerate the human-readable text with updated semantic information from a machine-generated source. I.e., it enables true two-way trans-operability between the human and machine forms.
 
-#+NAME: mrosetta-parse-contextuality
+#+NAME: mrosetta-parse-ignorable
 #+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
-(cl-defmethod mrosetta-parse-contextuality ((mlexpression mrosetta-mlexpression) &rest args)
-  "Parse expression contextuality into the MLEXPRESSION instance in context. This function utilizes no ARGS."
-  (setf (slot-value mlexpression 'is-contextual) t)
+(cl-defmethod mrosetta-parse-ignorable ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the ignorable property into the MLEXPRESSION instance in context. This function utilizes no ARGS."
+  (setf (slot-value mlexpression 'should-ignore) t)
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-contextuality
-: mrosetta-parse-contextuality
+#+RESULTS: mrosetta-parse-ignorable
+: mrosetta-parse-ignorable
 
-The metalanguage defines this expression through the ~contextual~ keyword.
+The metalanguage defines this expression through the ~ignorable~ keyword.
 
-#+NAME: mrosetta-parse-contextuality-symbol
+#+NAME: mrosetta-parse-ignorable-symbol
 #+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
-(push '(contextual . mrosetta-parse-contextuality) mrosetta-mlsyntax)
+(push '(ignorable . mrosetta-parse-ignorable) mrosetta-mlsyntax)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-contextuality-symbol
-: ((contextual . mrosetta-parse-contextuality) (as . mrosetta-parse-key) (optional . mrosetta-parse-optionality) (to . mrosetta-parse-modifier) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
+#+RESULTS: mrosetta-parse-ignorable-symbol
+: ((ignorable . mrosetta-parse-ignorable) (of . mrosetta-parse-of) (list . mrosetta-parse-list) (contextual . mrosetta-parse-contextuality) (as . mrosetta-parse-key) (optional . mrosetta-parse-optionality) (to . mrosetta-parse-modifier) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
-#+NAME: mrosetta-parse-contextuality-example
+#+NAME: mrosetta-parse-ignorable-example
 #+BEGIN_SRC text
-(contextual ":" suffixed paragraph)
+(ignorable ":" suffixed paragraph)
 #+END_SRC
 *** Collections
 Instead of matching a single occurrence of a complex expression, repetitively capture the corresponding expression within input text containing the recurring pattern, while structuring the resulting match as a list.
@@ -1056,7 +1101,7 @@ The ~list~ specifies the type of the encompassing /parent/ expression, while the
   (let ((sub-expression (plist-get args :right)))
     (when (or (eq sub-expression nil) (nlistp sub-expression))
       (error "Metalanguage syntax error: Sub-expression assignment without contextual expression"))
-    (mrosetta-parse mlexpression sub-expression))
+    (mrosetta-parse mlexpression :sub sub-expression))
   (plist-put args :right nil))
 #+END_SRC
 
@@ -1076,14 +1121,15 @@ Parse the metalanguage-specified definition within an expression instance.
 
 #+NAME: mrosetta-parse
 #+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
-(cl-defmethod mrosetta-parse ((mlexpression mrosetta-mlexpression) &optional sub-definition)
-  "Parse the metalanguage-specified definition within the MLEXPRESSION instance. Optionally, parse the explicitly-set SUB-DEFINITION instead."
-  (let ((mldefinition (if (eq sub-definition nil)
-                          (copy-tree (slot-value mlexpression 'mldefinition))
-                        (copy-tree sub-definition)))
-        (larg)
-        (element)
-        (rarg))
+(cl-defmethod mrosetta-parse ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the metalanguage-specified definition within the MLEXPRESSION instance. Optionally, parse the explicitly-set :sub definition in ARGS instead."
+  (let* ((sub-definition (plist-get args :sub))
+         (mldefinition (if (eq sub-definition nil)
+                           (copy-tree (slot-value mlexpression 'mldefinition))
+                         (copy-tree sub-definition)))
+         (larg)
+         (element)
+         (rarg))
     (while (> (length mldefinition) 0)
       (setq element (pop mldefinition)
             rarg (car mldefinition))
@@ -1129,6 +1175,7 @@ Compile the entire fractal tree within the root expression instance into a regul
          (rbuffer (slot-value mlexpression 'rbuffer))
          (left-rbuffer-key (mrosetta-generate-regex-key rkeychain))
          (right-rbuffer-key (mrosetta-generate-regex-key rkeychain))
+         (is-contextual (slot-value mlexpression 'is-contextual))
          (is-optional (slot-value mlexpression 'is-optional))
          (is-plural (slot-value mlexpression 'is-plural)))
     (if (eq (slot-value mlexpression 'extype) :fractal)
@@ -1145,11 +1192,13 @@ Compile the entire fractal tree within the root expression instance into a regul
     ;; Compile the total match, instance and expression-encompassing regular expressions
     (setq rmatch (concat "\\(?" (number-to-string rmatch-key) ":" rmatch "\\)"))
     (setq rinstance (concat "\\(?" (number-to-string rinstance-key) ":"
-                            "\\(?" (number-to-string left-rbuffer-key) ":" rbuffer "\\)"
-                            (or rprefix left-rboundary)
+                            (when (not is-contextual)
+                              (concat "\\(?" (number-to-string left-rbuffer-key) ":" rbuffer "\\)"
+                                      (or rprefix left-rboundary)))
                             rmatch
-                            (or rsuffix right-rboundary)
-                            "\\(?" (number-to-string right-rbuffer-key) ":" rbuffer "\\)"
+                            (when (not is-contextual)
+                              (concat (or rsuffix right-rboundary)
+                                      "\\(?" (number-to-string right-rbuffer-key) ":" rbuffer "\\)"))
                             "\\)"))
     (setq regex (concat "\\(?" (number-to-string regex-key) ":"
                         rinstance
@@ -1174,45 +1223,55 @@ Process human-readable source text and output the semantic data structure, as de
 
 #+NAME: mrosetta-process
 #+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
-(cl-defmethod mrosetta-process ((mlexpression mrosetta-mlexpression) htext)
-  "Process human-readable text within the HTEXT string and return the semantic data structure as defined by the MLEXPRESSION instance."
-  (let ((exdata '())
+(cl-defmethod mrosetta-process ((mlexpression mrosetta-mlexpression) &rest args)
+  "Process human-readable text within the :text or :inner string within ARGS and return the semantic data structure as defined by the MLEXPRESSION instance."
+  (let ((htext (or (plist-get args :text)
+                   (plist-get args :inner)))
+        (is-inner (plist-get args :inner))
+        (exdata '())
         (case-fold-search nil))
-    (save-match-data
-      (and (string-match (mrosetta-regex mlexpression) htext)
-           ;; Found match for the entirety of the expression
-           (let ((extext (match-string (mrosetta-regex-key mlexpression) htext))
-                 (pos))
-             (save-match-data
-               ;; Iterate over all instance occurrences within the matching expression text
-               (while (string-match (mrosetta-rinstance mlexpression) extext pos)
-                 (setq pos (match-end 0))
-                 ;; Process the exact match as defined by the expression
-                 (let ((instance-exdata))
-                   ;; Cases where the expression is a :fractal
-                   (when (eq (mrosetta-extype mlexpression) :fractal)
-                     ;; Recursively process all fractals within
-                     (let ((fractals (mrosetta-fractals mlexpression)))
-                       (dolist (fractal fractals)
-                         (let ((fractal-exdata (mrosetta-process fractal (match-string (mrosetta-regex-key fractal) extext))))
-                           (when fractal-exdata
-                             (setq instance-exdata `(,@instance-exdata ,fractal-exdata)))))))
-                   ;; Cases where the expression is a :match
-                   (when (and (eq (mrosetta-extype mlexpression) :match)
-                              (not (mrosetta-is-contextual mlexpression)))
-                     ;; Just store the semantic end-match, modified if defined as such
-                     (let ((match (match-string (mrosetta-rmatch-key mlexpression) extext))
-                           (modifier (mrosetta-modifier mlexpression)))
-                       (when modifier
-                         (setq match (funcall modifier match)))
-                       (setq instance-exdata match)))
-                   (setq exdata `(,@exdata ,instance-exdata))))))))
-    (when (> (length exdata) 0)
-      ;; Splice instance data in case of a singular expression
-      (when (not (mrosetta-is-plural mlexpression))
-        (setq exdata (car exdata)))
-      ;; Return the structured semantic data object
-      `(,(or (mrosetta-key mlexpression) :nokey) . ,exdata))))
+    (or (when (and (mrosetta-is-contextual mlexpression) is-inner)
+          ;; Return the full inner-text matched within the parent expression if not marked as ignorable
+          (when (and (eq (mrosetta-extype mlexpression) :match)
+                     (not (mrosetta-should-ignore mlexpression)))
+            `(,(or (mrosetta-key mlexpression) :nokey) . ,htext)))
+        (save-match-data
+          (and htext
+               (string-match (mrosetta-regex mlexpression) htext)
+               ;; Found match for the entirety of the expression
+               (let ((extext (match-string (mrosetta-regex-key mlexpression) htext))
+                     (pos))
+                 (save-match-data
+                   ;; Iterate over all instance occurrences within the matching expression text
+                   (while (string-match (mrosetta-rinstance mlexpression) extext pos)
+                     (setq pos (match-end 0))
+                     ;; Process the exact match as defined by the expression
+                     (let ((instance-exdata))
+                       ;; Cases where the expression is a :fractal
+                       (when (eq (mrosetta-extype mlexpression) :fractal)
+                         ;; Recursively process all fractals within
+                         (let ((fractals (mrosetta-fractals mlexpression)))
+                           (dolist (fractal fractals)
+                             (let ((fractal-exdata (mrosetta-process fractal :inner (match-string (mrosetta-regex-key fractal) extext))))
+                               (when fractal-exdata
+                                 (setq instance-exdata `(,@instance-exdata ,fractal-exdata)))))))
+                       ;; Cases where the expression is a :match
+                       (when (and (eq (mrosetta-extype mlexpression) :match)
+                                  (not (mrosetta-should-ignore mlexpression)))
+                         ;; Just store the semantic end-match, modified if defined as such
+                         (let ((match (match-string (mrosetta-rmatch-key mlexpression) extext))
+                               (modifier (mrosetta-modifier mlexpression)))
+                           (when modifier
+                             (setq match (funcall modifier match)))
+                           (setq instance-exdata match)))
+                       (when instance-exdata
+                         (setq exdata `(,@exdata ,instance-exdata)))))
+                   (when exdata
+                     ;; Splice instance data in case of a singular expression
+                     (when (not (mrosetta-is-plural mlexpression))
+                       (setq exdata (car exdata)))
+                     ;; Return the structured semantic data object
+                     `(,(or (mrosetta-key mlexpression) :nokey) . ,exdata)))))))))
 #+END_SRC
 
 #+RESULTS: mrosetta-process
@@ -1223,51 +1282,59 @@ Process human-readable source text and output the original text semantically upd
 
 #+NAME: mrosetta-update
 #+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
-(cl-defmethod mrosetta-update ((mlexpression mrosetta-mlexpression) htext sdata)
-  "Process human readable text within the HTEXT string and return the semantically updated text with the provided SDATA structure, as defined by the MLEXPRESSION instance."
-  (when (and sdata
-             (not (eq (car sdata)
-                      (mrosetta-key mlexpression))))
-    (error "Data structure error: Key mismatch"))
-  (let ((exdata (and sdata
-                     (copy-tree (cdr sdata))))
-        (newtext))
-    (save-match-data
-      (and (string-match (mrosetta-regex mlexpression) htext)
-           ;; Found metalanguage expression match
-           (let ((extext (match-string (mrosetta-regex-key mlexpression) htext))
-                 (pos))
-             (save-match-data
-               (while (string-match (mrosetta-rinstance mlexpression) extext pos)
-                 (setq pos (match-end 0))
-                 ;; Update each instance
-                 (let ((instance-exdata (if (mrosetta-is-plural mlexpression) (pop exdata) exdata))
-                       (instance-newtext))
-                   (if (eq (mrosetta-extype mlexpression) :fractal)
-                       ;; Recursively update all fractals within
-                       (let ((fractals (mrosetta-fractals mlexpression)))
-                         (dolist (fractal fractals)
-                           (let* ((fractal-exdata (assq (mrosetta-key fractal) instance-exdata))
-                                  (fractal-text (match-string (mrosetta-regex-key fractal) extext))
-                                  (fractal-newtext (mrosetta-update fractal-text fractal-exdata)))
-                             (setq instance-newtext (concat instance-newtext fractal-newtext)))))
-                     ;; Update end-elements
-                     (let ((left-buffer (match-string (mrosetta-left-rbuffer-key mlexpression) extext))
-                           (right-buffer (match-string (mrosetta-right-rbuffer-key mlexpression) extext)))
-                       (when (eq (mrosetta-extype mlexpression) :match)
-                         ;; Update match text, including contextual matches
-                         (let ((prefix (mrosetta-match-prefix mlexpression))
-                               (suffix (mrosetta-match-suffix mlexpression))
-                               (match (or instance-exdata
-                                          (match-string (mrosetta-rmatch-key mlexpression) extext))))
-                           (setq instance-newtext (concat left-buffer prefix match suffix right-buffer))))
-                       (when (eq (mrosetta-extype mlexpression) :literal)
-                         ;; Include the literal, with surrounding buffer
-                         (let ((literal (mrosetta-match-literal mlexpression)))
-                           (setq instance-newtext (concat left-buffer literal right-buffer))))))
-                   (setq newtext (concat newtext instance-newtext))))))))
-    ;; Return the updated text
-    newtext))
+(cl-defmethod mrosetta-update ((mlexpression mrosetta-mlexpression) &rest args)
+  "Process human readable text within the :text or :inner string and return the semantically updated text with the provided :sdata structure within ARGS, as defined by the MLEXPRESSION instance."
+  (let ((htext (or (plist-get args :text)
+                   (plist-get args :inner)))
+        (exkey (car (plist-get args :sdata)))
+        (exdata (copy-tree (cdr (plist-get args :sdata))))
+        (is-inner (plist-get args :inner))
+        (newtext)
+        (case-fold-search nil))
+    (when (and exdata
+               (not (eq exkey
+                        (or (mrosetta-key mlexpression) :nokey))))
+      (error "Data structure error: Key mismatch"))
+    (or (when (and (mrosetta-is-contextual mlexpression) is-inner)
+          ;; Return the full inner-text matched within the parent expression or the updated text passed in
+          (or exdata htext))
+        (save-match-data
+          (and htext
+               (string-match (mrosetta-regex mlexpression) htext)
+               ;; Found metalanguage expression match
+               (let ((extext (match-string (mrosetta-regex-key mlexpression) htext))
+                     (pos))
+                 (save-match-data
+                   (while (string-match (mrosetta-rinstance mlexpression) extext pos)
+                     (setq pos (match-end 0))
+                     ;; Update each instance
+                     (let ((instance-exdata (if (mrosetta-is-plural mlexpression) (pop exdata) exdata))
+                           (instance-newtext))
+                       (if (eq (mrosetta-extype mlexpression) :fractal)
+                           ;; Recursively update all fractals within
+                           (let ((fractals (mrosetta-fractals mlexpression)))
+                             (dolist (fractal fractals)
+                               (let* ((fractal-exdata (assq (mrosetta-key fractal) instance-exdata))
+                                      (fractal-text (match-string (mrosetta-regex-key fractal) extext))
+                                      (fractal-newtext (mrosetta-update fractal :inner fractal-text :sdata fractal-exdata)))
+                                 (setq instance-newtext (concat instance-newtext fractal-newtext)))))
+                         ;; Update end-elements
+                         (let ((left-buffer (match-string (mrosetta-left-rbuffer-key mlexpression) extext))
+                               (right-buffer (match-string (mrosetta-right-rbuffer-key mlexpression) extext)))
+                           (when (eq (mrosetta-extype mlexpression) :match)
+                             ;; Update match text, including ignorable matches
+                             (let ((prefix (mrosetta-match-prefix mlexpression))
+                                   (suffix (mrosetta-match-suffix mlexpression))
+                                   (match (or instance-exdata
+                                              (match-string (mrosetta-rmatch-key mlexpression) extext))))
+                               (setq instance-newtext (concat left-buffer prefix match suffix right-buffer))))
+                           (when (eq (mrosetta-extype mlexpression) :literal)
+                             ;; Include the literal, with surrounding buffer
+                             (let ((literal (mrosetta-match-literal mlexpression)))
+                               (setq instance-newtext (concat left-buffer literal right-buffer))))))
+                       (setq newtext (concat newtext instance-newtext))))
+                   ;; Return the updated text
+                   newtext)))))))
 #+END_SRC
 
 #+RESULTS: mrosetta-update
@@ -1279,12 +1346,12 @@ This section covers various examples of metalanguage syntax along with their res
 Note that by metalanguage syntax, the outermost expression is auto-parenthesized, thus making it a legitimate list expression.
 
 #+NAME: demo-mlexpression
-#+BEGIN_SRC emacs-lisp :session mrosetta-demo :var definition="" input=""
+#+BEGIN_SRC emacs-lisp :session mrosetta-demo :var definition="" input="" :results value verbatim
 (let* ((mldefinition (car (read-from-string (concat "(" definition ")"))))
        (mlexpression (mrosetta-mlexpression :mldefinition mldefinition)))
   (mrosetta-parse mlexpression)
   (mrosetta-compile mlexpression)
-  (mrosetta-process mlexpression input))
+  (mrosetta-process mlexpression :text input))
 #+END_SRC
 
 ** Words
@@ -1306,7 +1373,7 @@ The current status is OPERATIONAL.
 #+CALL: demo-mlexpression( definition=demo-word-uppercase, input=demo-word-uppercase-text )
 
 #+RESULTS:
-: (status . OPERATIONAL)
+: (status . "OPERATIONAL")
 
 *** Capitalized Word
 Match a single capitalized word.
@@ -1324,7 +1391,7 @@ Report: All systems operational
 #+CALL: demo-mlexpression( definition=demo-word-capitalized, input=demo-word-capitalized-text )
 
 #+RESULTS:
-: (title . Report)
+: (title . "Report")
 
 *** A Prefixed Word
 Match a single word defined by a specific prefix.
@@ -1342,7 +1409,7 @@ A new task has been created for #devops!
 #+CALL: demo-mlexpression( definition=demo-word-prefixed, input=demo-word-prefixed-text )
 
 #+RESULTS:
-: (tag . devops)
+: (tag . "devops")
 
 *** A Suffixed Word
 Match a single word defined by a specific suffix.
@@ -1360,17 +1427,225 @@ A new critical! issue submitted.
 #+CALL: demo-mlexpression( definition=demo-word-suffixed, input=demo-word-suffixed-text )
 
 #+RESULTS:
-: (priority . critical)
+: (priority . "critical")
 
 *** Word with Specific Content
+Match a word containing specific content, such as a single character or substring.
+
+#+NAME: demo-word-content
+#+BEGIN_EXAMPLE
+word with "/" as project
+#+END_EXAMPLE
+
+#+NAME: demo-word-content-text
+#+BEGIN_EXAMPLE
+A new card added in backend/api.
+#+END_EXAMPLE
+
+#+CALL: demo-mlexpression( definition=demo-word-content, input=demo-word-content-text )
+
+#+RESULTS:
+: (project . "backend/api")
+
 *** Word to Uppercase
+Modify the matched word to uppercase.
+
+#+NAME: demo-word-to-uppercase
+#+BEGIN_EXAMPLE
+"!" prefixed word as priority to uppercase
+#+END_EXAMPLE
+
+#+NAME: demo-word-to-uppercase-text
+#+BEGIN_EXAMPLE
+[!high] Received a new support ticket.
+#+END_EXAMPLE
+
+#+CALL: demo-mlexpression( definition=demo-word-to-uppercase, input=demo-word-to-uppercase-text )
+
+#+RESULTS:
+: (priority . "HIGH")
+
 *** Word to Lowercase
-*** Optional Words
+Modify the matched word to lowercase.
+
+#+NAME: demo-word-to-lowercase
+#+BEGIN_EXAMPLE
+"#" prefixed word as label to lowercase
+#+END_EXAMPLE
+
+#+NAME: demo-word-to-lowercase-text
+#+BEGIN_EXAMPLE
+New message received marked for #Support!
+#+END_EXAMPLE
+
+#+CALL: demo-mlexpression( definition=demo-word-to-lowercase, input=demo-word-to-lowercase-text )
+
+#+RESULTS:
+: (label . "support")
+
 *** List of Words
-*** List of Words in Context
+Match a list of words matching defined criteria.
+
+#+NAME: demo-word-list
+#+BEGIN_EXAMPLE
+":" prefixed words as tags
+#+END_EXAMPLE
+
+#+NAME: demo-word-list-text
+#+BEGIN_EXAMPLE
+Task completed successfully :devops :api!
+#+END_EXAMPLE
+
+#+CALL: demo-mlexpression( definition=demo-word-list, input=demo-word-list-text )
+
+#+RESULTS:
+: (tags "devops" "api")
+
 ** Paragraphs
+*** Paragraph Based on Criteria
+Match a paragraph of text conforming with specified criteria. Note that in order to successfully match a paragraph of text, both boundaries need to be either explicitly or contextually specified.
+
+When explicitly setting boundaries, the left boundary is implicitly the first possibly matched character.
+
+#+NAME: demo-paragraph
+#+BEGIN_EXAMPLE
+": " prefixed "." suffixed paragraph as status
+#+END_EXAMPLE
+
+#+NAME: demo-paragraph-text
+#+BEGIN_EXAMPLE
+Status update: API service started successfully.
+#+END_EXAMPLE
+
+#+CALL: demo-mlexpression( definition=demo-paragraph, input=demo-paragraph-text )
+
+#+RESULTS:
+: (status . "API service started successfully")
+
 *** List of Paragraphs
-** Contextuality and Text Regeneration
+Match a list of consecutive paragraphs defined by specified criteria.
+
+#+NAME: demo-paragraph-list
+#+BEGIN_EXAMPLE
+"." suffixed paragraphs as statements to lowercase
+#+END_EXAMPLE
+
+#+NAME: demo-paragraph-list-text
+#+BEGIN_EXAMPLE
+One task completed. Three tasks updated. Two tasks created.
+#+END_EXAMPLE
+
+#+CALL: demo-mlexpression( definition=demo-paragraph-list, input=demo-paragraph-list-text )
+
+#+RESULTS:
+: (statements "one task completed" "three tasks updated" "two tasks created")
+
+** Complex Expressions
+*** All-inclusive Match
+Match multiple elements inbetween ignorable information within human readable text.
+
+#+NAME: demo-complex
+#+BEGIN_EXAMPLE
+(WORD as priority to lowercase) (ignorable contextual paragraph) (word with "/" as project) (ignorable contextual paragraph) ("#" prefixed word as type)
+#+END_EXAMPLE
+
+#+NAME: demo-complex-text
+#+BEGIN_EXAMPLE
+CRITICAL Task created in backend/api for #devops!
+#+END_EXAMPLE
+
+#+CALL: demo-mlexpression( definition=demo-complex, input=demo-complex-text )
+
+#+RESULTS:
+: (:nokey (priority . "critical") (project . "backend/api") (type . "devops"))
+
+*** Optional Matches
+Match multiple elements, one or more of which are optional in presence and aren't required to trigger a semantic match.
+
+#+NAME: demo-complex-optional
+#+BEGIN_EXAMPLE
+(optional WORD as priority to lowercase) (ignorable contextual paragraph) (word with "/" as project) (ignorable contextual paragraph) ("#" prefixed word as type)
+#+END_EXAMPLE
+
+The following text example doesn't contain an optional element. As expected, the structured data output is processed and matched, excluding the missing optional element.
+
+#+NAME: demo-complex-optional-text
+#+BEGIN_EXAMPLE
+Task created in backend/api for #devops!
+#+END_EXAMPLE
+
+#+CALL: demo-mlexpression( definition=demo-complex-optional, input=demo-complex-optional-text )
+
+#+RESULTS:
+: (:nokey (project . "backend/api") (type . "devops"))
+
+By passing the example from above, containing the optional priority element, the output structure includes and matches the element.
+
+#+CALL: demo-mlexpression( definition=demo-complex-optional, input=demo-complex-text )
+
+#+RESULTS:
+: (:nokey (priority . "critical") (project . "backend/api") (type . "devops"))
+
+*** Complex Collections
+Match multiple occurrences of expressions containing multiple elements.
+
+#+NAME: demo-complex-collection
+#+BEGIN_EXAMPLE
+"!" suffixed list of ((optional WORD as priority to lowercase) (ignorable contextual paragraph) (word with "/" as project) (ignorable contextual paragraph) ("#" prefixed words as types))
+#+END_EXAMPLE
+
+#+NAME: demo-complex-collection-text
+#+BEGIN_EXAMPLE
+CRITICAL task created in backend/api for #devops! Task created in web/home for #frontend #design! BLOCKER task created in backend/api for #backend!
+#+END_EXAMPLE
+
+#+CALL: demo-mlexpression( definition=demo-complex-collection, input=demo-complex-collection-text )
+
+#+RESULTS:
+: (:nokey ((priority . "critical") (project . "backend/api") (types "devops")) ((project . "web/home") (types "frontend" "design")) ((priority . "blocker") (project . "backend/api") (types "backend")))
+
+** Text Regeneration
+Update the original text with new semantic information from passed in structured data.
+
+#+NAME: demo-mlexpression-update
+#+BEGIN_SRC emacs-lisp :session mrosetta-demo :var definition="" input-text="" input-data=""" :results value verbatim
+(let* ((mldefinition (car (read-from-string (concat "(" definition ")"))))
+       (mlexpression (mrosetta-mlexpression :mldefinition mldefinition))
+       (sdata `(:nokey . ,(car (read-from-string (concat "(" input-data ")"))))))
+  (mrosetta-parse mlexpression)
+  (mrosetta-compile mlexpression)
+  (mrosetta-update mlexpression :text input-text :sdata sdata))
+#+END_SRC
+
+#+NAME: demo-regen
+#+BEGIN_EXAMPLE
+(WORD as priority) (ignorable contextual paragraph) (word with "/" as project) (ignorable contextual paragraph) ("#" prefixed words as types)
+#+END_EXAMPLE
+
+#+NAME: demo-regen-text
+#+BEGIN_EXAMPLE
+CRITICAL task created in backend/api for #devops #backend!
+#+END_EXAMPLE
+
+The structured data from input text will look like so:
+
+#+CALL: demo-mlexpression( definition=demo-regen, input=demo-regen-text )
+
+#+RESULTS:
+: (:nokey (priority . "CRITICAL") (project . "backend/api") (types "devops" "backend"))
+
+Now, we can pass in an updated property or two. The properties not included will remain intact.
+
+#+NAME: demo-regen-data
+#+BEGIN_EXAMPLE
+(priority . "BLOCKER") (types "backend" "frontend")
+#+END_EXAMPLE
+
+#+CALL: demo-mlexpression-update( definition=demo-regen, input-text=demo-regen-text, input-data=demo-regen-data )
+
+#+RESULTS:
+: "BLOCKER task created in backend/api for #backend #frontend"
+
 * Contexts
 ** Org
 * Connectors
