@@ -34,12 +34,9 @@ For details and language specification, please refer to the original package doc
 #+END_SRC
 * Dependencies
 #+NAME: dependencies
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (require 'eieio)
 #+END_SRC
-
-#+RESULTS: dependencies
-: eieio
 
 * The Metalanguage
 The metalanguage specification and parser.
@@ -130,7 +127,7 @@ Key management is encapsulated within a simple keychain class which holds all ge
 The class itself is designed as a no-argument constructor as the key generator is automatically initialized upon creation.
 
 #+NAME: mrosetta-keychain
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (defclass mrosetta-keychain ()
   ((lastkey
     :initform '0
@@ -140,9 +137,6 @@ The class itself is designed as a no-argument constructor as the key generator i
   "A regex group key generator.")
 #+END_SRC
 
-#+RESULTS: mrosetta-keychain
-: mrosetta-keychain
-
 ******* Behavior
 This section covers all defined behavior for the keychain class.
 
@@ -150,15 +144,12 @@ This section covers all defined behavior for the keychain class.
 Register for a new key with a particular expression instance.
 
 #+NAME: mrosetta-generate-regex-key
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-generate-regex-key ((keychain mrosetta-keychain))
   "Generate a new key within a provided KEYCHAIN."
   (let ((key (+ 1 (slot-value keychain 'lastkey))))
     (setf (slot-value keychain 'lastkey) key)))
 #+END_SRC
-
-#+RESULTS: mrosetta-generate-regex-key
-: mrosetta-generate-regex-key
 
 ***** Regular Expression
 The compiled regular expression of the metalanguage expression in context.
@@ -456,7 +447,7 @@ If the expression defines a plural match, then the output value is in list form 
 The /expression/ class is defined below, containing all the properties listed above.
 
 #+NAME: mrosetta-mlexpression
-#+BEGIN_SRC emacs-lisp :noweb yes :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :noweb yes :tangle yes
 (defclass mrosetta-mlexpression ()
   (
    <<mldefinition>>
@@ -493,27 +484,21 @@ The /expression/ class is defined below, containing all the properties listed ab
   "The Metarosetta Expression object used to define a contextual translational expression for semantic processing.")
 #+END_SRC
 
-#+RESULTS: mrosetta-mlexpression
-: mrosetta-mlexpression
-
 ** Language Specification
 The purpose of the language is to facilitate expressions which unambiguously define a translation protocol between human-readable text and machine-digestible data structures, with the semantics completely preserved, based on an arbitrarily defined pattern of human input within a specific context.
 
 All keywords within the specification are stored as symbols which map to their respective parse functions.
 
 #+NAME: mrosetta-mlsyntax
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (defvar mrosetta-mlsyntax '())
 #+END_SRC
-
-#+RESULTS: mrosetta-mlsyntax
-: mrosetta-mlsyntax
 
 *** Literal Quote
 The simplest expression defining statically quoted text which should appear literally within input text.
 
 #+NAME: mrosetta-parse-literal
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-literal ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the :right arg content within ARGS as a literal quote into the MLEXPRESSION instance in context."
   (let ((literal-quote (plist-get args :right)))
@@ -525,18 +510,12 @@ The simplest expression defining statically quoted text which should appear lite
   (plist-put args :right nil))
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-literal
-: mrosetta-parse-literal
-
 The metalanguage itself defines this expression through the ~literal~ keyword with the accompanying quote.
 
 #+NAME: mrosetta-parse-literal-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(literal . mrosetta-parse-literal) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-literal-symbol
-: ((literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -548,7 +527,7 @@ A usage example is as follows:
 An expression used to capture a variable word from within input text.
 
 #+NAME: mrosetta-parse-word
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-word ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
   (setf (slot-value mlexpression 'extype) :match)
@@ -558,18 +537,12 @@ An expression used to capture a variable word from within input text.
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-word
-: mrosetta-parse-word
-
 The metalanguage defines this expression through the ~word~ keyword.
 
 #+NAME: mrosetta-parse-word-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(word . mrosetta-parse-word) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-word-symbol
-: ((word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -585,7 +558,7 @@ In addition to the ability to match any kind of word, the metalanguage specifica
 Match only uppercase words.
 
 #+NAME: mrosetta-parse-word-uppercase
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-word-uppercase ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse an uppercase word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
   (setq args (apply 'mrosetta-parse-word mlexpression args))
@@ -594,18 +567,12 @@ Match only uppercase words.
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-word-uppercase
-: mrosetta-parse-word-uppercase
-
 The metalanguage defines this expression through the ~WORD~ keyword. Note that the metalanguage syntax is case-sensitive, where case is also part of the syntax itself.
 
 #+NAME: mrosetta-parse-word-uppercase-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(WORD . mrosetta-parse-word-uppercase) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-word-uppercase-symbol
-: ((WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -617,7 +584,7 @@ A usage example is as follows:
 Match only capitalized words.
 
 #+NAME: mrosetta-parse-word-capitalized
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-word-capitalized ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a capitalized word expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
   (setq args (apply 'mrosetta-parse-word mlexpression args))
@@ -626,18 +593,12 @@ Match only capitalized words.
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-word-capitalized
-: mrosetta-parse-word-capitalized
-
 The metalanguage defines this expression through the ~Word~ keyword.
 
 #+NAME: mrosetta-parse-word-capitalized-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(Word . mrosetta-parse-word-capitalized) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-word-capitalized-symbol
-: ((Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -649,7 +610,7 @@ A usage example is as follows:
 Instead of a single value, capture all value occurrences matching defined criteria within the encompassing expression context.
 
 #+NAME: mrosetta-parse-word-plurality
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-word-plurality ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a plural words expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
   (setq args (apply 'mrosetta-parse-word mlexpression args))
@@ -657,18 +618,12 @@ Instead of a single value, capture all value occurrences matching defined criter
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-word-plurality
-: mrosetta-parse-word-plurality
-
 The metalanguage defines this expression through the ~words~ keyword.
 
 #+NAME: mrosetta-parse-word-plurality-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(words . mrosetta-parse-word-plurality) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-word-plurality-symbol
-: ((words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -682,7 +637,7 @@ An expression used to capture a variable paragraph from within input text.
 A paragraph is considered all text within specified boundaries. If no boundaries are set, the entire input is matched.
 
 #+NAME: mrosetta-parse-paragraph
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-paragraph ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a paragraph epxression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
   (setf (slot-value mlexpression 'extype) :match)
@@ -690,18 +645,12 @@ A paragraph is considered all text within specified boundaries. If no boundaries
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-paragraph
-: mrosetta-parse-paragraph
-
 The metalanguage defines this expression through the ~paragraph~ keyword.
 
 #+NAME: mrosetta-parse-paragraph-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(paragraph . mrosetta-parse-paragraph) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-paragraph-symbol
-: ((paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -716,7 +665,7 @@ Like words, it's possible to capture multiple paragraph occurrences matching the
 Note that this construct only makes sense if paragraphs are clearly bounded.
 
 #+NAME: mrosetta-parse-paragraph-plurality
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-paragraph-plurality ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse a plural paragraph expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
   (setq args (apply 'mrosetta-parse-paragraph mlexpression args))
@@ -724,18 +673,12 @@ Note that this construct only makes sense if paragraphs are clearly bounded.
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-paragraph-plurality
-: mrosetta-parse-paragraph-plurality
-
 The metalanguage defines this expression through the ~paragraphs~ keyword.
 
 #+NAME: mrosetta-parse-paragraph-plurality-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(paragraphs . mrosetta-parse-paragraph-plurality) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-paragraph-plurality-symbol
-: ((paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -748,7 +691,7 @@ A usage example is as follows:
 Match only elements containing specific characters or content.
 
 #+NAME: mrosetta-parse-substring
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-substring ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse quoted text from :right arg within ARGS as matching element substring into the MLEXPRESSION instance in context."
   (let* ((substring-quote (plist-get args :right))
@@ -766,18 +709,12 @@ Match only elements containing specific characters or content.
   (plist-put args :right nil))
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-substring
-: mrosetta-parse-substring
-
 The metalanguage defines this expression through the ~with~ keyword with the accompanying quote.
 
 #+NAME: mrosetta-parse-substring-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(with . mrosetta-parse-substring) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-substring-symbol
-: ((with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -792,7 +729,7 @@ Match only elements with the specified prefix or suffix. Note that the prefix or
 Match only elements prefixed with the supplied quoted content.
 
 #+NAME: mrosetta-parse-prefix
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-prefix ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse quoted text from :left arg within ARGS as matching element prefix into the MLEXPRESSION instance in context."
   (let ((prefix-quote (plist-get args :left)))
@@ -803,18 +740,12 @@ Match only elements prefixed with the supplied quoted content.
   (plist-put args :left nil))
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-prefix
-: mrosetta-parse-prefix
-
 The metalanguage defines this expression through the ~prefixed~ keyword with the accompanying quote preceding the keyword.
 
 #+NAME: mrosetta-parse-prefix-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(prefixed . mrosetta-parse-prefix) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-prefix-symbol
-: ((prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -826,7 +757,7 @@ A usage example is as follows:
 Match only elements suffixed with the supplied quoted content.
 
 #+NAME: mrosetta-parse-suffix
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-suffix ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse quoted text from :left arg within ARGS as matching element suffix into the MLEXPRESSION instance in context."
   (let ((suffix-quote (plist-get args :left)))
@@ -837,18 +768,12 @@ Match only elements suffixed with the supplied quoted content.
   (plist-put args :left nil))
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-suffix
-: mrosetta-parse-suffix
-
 The metalanguage defines this expression through the ~suffixed~ keyword with the accompanying quote preceding the keyword.
 
 #+NAME: mrosetta-parse-suffix-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(suffixed . mrosetta-parse-suffix) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-suffix-symbol
-: ((suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -860,25 +785,19 @@ A usage example is as follows:
 Match elements based on contextual criteria of neighboring matches. Note that a contextual specifier is only applicable to ~paragraph~ expressions.
 
 #+NAME: mrosetta-parse-contextual
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-contextual ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the contextual specifier into the MLEXPRESSION instance in context. This function utilizes no ARGS."
   (setf (slot-value mlexpression 'is-contextual) t)
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-contextual
-: mrosetta-parse-contextual
-
 The metalanguage defines this expression through the ~contextual~ keyword.
 
 #+NAME: mrosetta-parse-contextual-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(contextual . mrosetta-parse-contextual) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-contextual-symbol
-: ((contextual . mrosetta-parse-contextual) (ignorable . mrosetta-parse-ignorable) (of . mrosetta-parse-of) (list . mrosetta-parse-list) (contextual . mrosetta-parse-contextuality) (as . mrosetta-parse-key) (optional . mrosetta-parse-optionality) (to . mrosetta-parse-modifier) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -892,12 +811,9 @@ Modify captured elements before structured output.
 Modifiers are defined as contextual arguments succeeding the general modifier keyword.
 
 #+NAME: mrosetta-mlsyntax-modifiers
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (defvar mrosetta-mlsyntax-modifiers '())
 #+END_SRC
-
-#+RESULTS: mrosetta-mlsyntax-modifiers
-: mrosetta-mlsyntax-modifiers
 
 **** Uppercase
 Transform captured elements to uppercase format.
@@ -905,12 +821,9 @@ Transform captured elements to uppercase format.
 To do so, use the ~uppercase~ argument following the ~to~ modifier keyword.
 
 #+NAME: mrosetta-parse-modifier-uppercase-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(uppercase . upcase) mrosetta-mlsyntax-modifiers)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-modifier-uppercase-symbol
-: ((uppercase . upcase))
 
 A usage example is as follows:
 
@@ -924,12 +837,9 @@ Transform captured elements to lowercase format.
 To do so, use the ~lowercase~ argument following the ~to~ modifier keyword.
 
 #+NAME: mrosetta-parse-modifier-lowercase-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(lowercase . downcase) mrosetta-mlsyntax-modifiers)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-modifier-lowercase-symbol
-: ((lowercase . downcase) (uppercase . upcase))
 
 A usage example is as follows:
 
@@ -941,7 +851,7 @@ A usage example is as follows:
 All modifier contextual arguments are handled by a central modifier parser.
 
 #+NAME: mrosetta-parse-modifier
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-modifier ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the modifier symbol from :right arg within ARGS into the MLEXPRESSION instance in context."
   (let ((modifier-symbol (plist-get args :right)))
@@ -952,18 +862,12 @@ All modifier contextual arguments are handled by a central modifier parser.
   (plist-put args :right nil))
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-modifier
-: mrosetta-parse-modifier
-
 The metalanguage defines the modifier context through the ~to~ keyword followed by the contextual arguments listed above.
 
 #+NAME: mrosetta-parse-modifier-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(to . mrosetta-parse-modifier) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-modifier-symbol
-: ((to . mrosetta-parse-modifier) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 *** Optionality
 Specify whether the encompassing expression should be considered as an optional, or required match.
@@ -973,25 +877,19 @@ Input text without an optional expression match still gets processed, structured
 All defined expressions are considered as mandatory by default.
 
 #+NAME: mrosetta-parse-optionality
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-optionality ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse expression optionality into the MLEXPRESSION instance in context. This function utilizes no ARGS."
   (setf (slot-value mlexpression 'is-optional) t)
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-optionality
-: mrosetta-parse-optionality
-
 The metalanguage defines this expression through the ~optional~ keyword.
 
 #+NAME: mrosetta-parse-optionality-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(optional . mrosetta-parse-optionality) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-optionality-symbol
-: ((optional . mrosetta-parse-optionality) (to . mrosetta-parse-modifier) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -1003,7 +901,7 @@ A usage example is as follows:
 Assign a key to the resulting value of the encompassing expression.
 
 #+NAME: mrosetta-parse-key
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-key ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the key symbol from :right arg within ARGS into the MLEXPRESSION instance in context."
   (let ((key-symbol (plist-get args :right)))
@@ -1013,18 +911,12 @@ Assign a key to the resulting value of the encompassing expression.
   (plist-put args :right nil))
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-key
-: mrosetta-parse-key
-
 The metalanguage defines the assignment expression through the ~as~ keyword followed by the key symbol.
 
 #+NAME: mrosetta-parse-key-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(as . mrosetta-parse-key) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-key-symbol
-: ((as . mrosetta-parse-key) (optional . mrosetta-parse-optionality) (to . mrosetta-parse-modifier) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -1040,25 +932,19 @@ Ignorables are considered as semantically insignificant text occurring before an
 While this text is unimportant for structured semantics, it remains an intrinsic part of the human-readable form. This provides an ability to regenerate the human-readable text with updated semantic information from a machine-generated source. I.e., it enables true two-way trans-operability between the human and machine forms.
 
 #+NAME: mrosetta-parse-ignorable
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-ignorable ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the ignorable property into the MLEXPRESSION instance in context. This function utilizes no ARGS."
   (setf (slot-value mlexpression 'should-ignore) t)
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-ignorable
-: mrosetta-parse-ignorable
-
 The metalanguage defines this expression through the ~ignorable~ keyword.
 
 #+NAME: mrosetta-parse-ignorable-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(ignorable . mrosetta-parse-ignorable) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-ignorable-symbol
-: ((ignorable . mrosetta-parse-ignorable) (of . mrosetta-parse-of) (list . mrosetta-parse-list) (contextual . mrosetta-parse-contextuality) (as . mrosetta-parse-key) (optional . mrosetta-parse-optionality) (to . mrosetta-parse-modifier) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 A usage example is as follows:
 
@@ -1076,26 +962,20 @@ The metalanguage defines collection expressions through two keywords: ~list~ and
 The ~list~ specifies the type of the encompassing /parent/ expression, while the ~of~ designates its fractal content.
 
 #+NAME: mrosetta-parse-list
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-list ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the list epxression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
   (setf (slot-value mlexpression 'is-plural) t)
   args)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-list
-: mrosetta-parse-list
-
 #+NAME: mrosetta-parse-list-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(list . mrosetta-parse-list) mrosetta-mlsyntax)
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-list-symbol
-: ((list . mrosetta-parse-list) (contextual . mrosetta-parse-contextuality) (as . mrosetta-parse-key) (optional . mrosetta-parse-optionality) (to . mrosetta-parse-modifier) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
-
 #+NAME: mrosetta-parse-of
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse-of ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the sub-expression from :right arg within ARGS into the MLEXPRESSION instance in context."
   (let ((sub-expression (plist-get args :right)))
@@ -1105,22 +985,16 @@ The ~list~ specifies the type of the encompassing /parent/ expression, while the
   (plist-put args :right nil))
 #+END_SRC
 
-#+RESULTS: mrosetta-parse-of
-: mrosetta-parse-of
-
 #+NAME: mrosetta-parse-of-symbol
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (push '(of . mrosetta-parse-of) mrosetta-mlsyntax)
 #+END_SRC
-
-#+RESULTS: mrosetta-parse-of-symbol
-: ((of . mrosetta-parse-of) (list . mrosetta-parse-list) (contextual . mrosetta-parse-contextuality) (as . mrosetta-parse-key) (optional . mrosetta-parse-optionality) (to . mrosetta-parse-modifier) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 ** Expression Parsing
 Parse the metalanguage-specified definition within an expression instance.
 
 #+NAME: mrosetta-parse
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-parse ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the metalanguage-specified definition within the MLEXPRESSION instance. Optionally, parse the explicitly-set :sub definition in ARGS instead."
   (let* ((sub-definition (plist-get args :sub))
@@ -1151,14 +1025,11 @@ Parse the metalanguage-specified definition within an expression instance.
         (setq larg element)))))
 #+END_SRC
 
-#+RESULTS: mrosetta-parse
-: mrosetta-parse
-
 ** Expression Compilation
 Compile the entire fractal tree within the root expression instance into a regular expression structure.
 
 #+NAME: mrosetta-compile
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-compile ((mlexpression mrosetta-mlexpression))
   "Compile the MLEXPRESSION instance into a regular expression structure."
   (let* ((rkeychain (slot-value mlexpression 'rkeychain))
@@ -1215,14 +1086,11 @@ Compile the entire fractal tree within the root expression instance into a regul
           (slot-value mlexpression 'regex) regex)))
 #+END_SRC
 
-#+RESULTS: mrosetta-compile
-: mrosetta-compile
-
 * Text Processing
 Process human-readable source text and output the semantic data structure, as defined by the metalanguage expression in context.
 
 #+NAME: mrosetta-process
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-process ((mlexpression mrosetta-mlexpression) &rest args)
   "Process human-readable text within the :text or :inner string within ARGS and return the semantic data structure as defined by the MLEXPRESSION instance."
   (let ((htext (or (plist-get args :text)
@@ -1274,14 +1142,11 @@ Process human-readable source text and output the semantic data structure, as de
                      `(,(or (mrosetta-key mlexpression) :nokey) . ,exdata)))))))))
 #+END_SRC
 
-#+RESULTS: mrosetta-process
-: mrosetta-process
-
 * Text Updating
 Process human-readable source text and output the original text semantically updated with the provided data structure.
 
 #+NAME: mrosetta-update
-#+BEGIN_SRC emacs-lisp :tangle yes :session mrosetta-demo
+#+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-update ((mlexpression mrosetta-mlexpression) &rest args)
   "Process human readable text within the :text or :inner string and return the semantically updated text with the provided :sdata structure within ARGS, as defined by the MLEXPRESSION instance."
   (let ((htext (or (plist-get args :text)
@@ -1337,11 +1202,68 @@ Process human-readable source text and output the original text semantically upd
                    newtext)))))))
 #+END_SRC
 
-#+RESULTS: mrosetta-update
-: mrosetta-update
-
 * Demos
-This section covers various examples of metalanguage syntax along with their respective processing walkthroughs.
+This section covers various examples of metalanguage syntax.
+
+#+NAME: demo-init
+#+BEGIN_SRC emacs-lisp :noweb yes :session mrosetta-demo
+<<dependencies>>
+
+<<mrosetta-keychain>>
+<<mrosetta-generate-regex-key>>
+
+<<mrosetta-mlexpression>>
+
+<<mrosetta-mlsyntax>>
+<<mrosetta-mlsyntax-modifiers>>
+
+<<mrosetta-parse-literal>>
+<<mrosetta-parse-literal-symbol>>
+<<mrosetta-parse-word>>
+<<mrosetta-parse-word-symbol>>
+<<mrosetta-parse-word-uppercase>>
+<<mrosetta-parse-word-uppercase-symbol>>
+<<mrosetta-parse-word-capitalized>>
+<<mrosetta-parse-word-capitalized-symbol>>
+<<mrosetta-parse-word-plurality>>
+<<mrosetta-parse-word-plurality-symbol>>
+<<mrosetta-parse-paragraph>>
+<<mrosetta-parse-paragraph-symbol>>
+<<mrosetta-parse-paragraph-plurality>>
+<<mrosetta-parse-paragraph-plurality-symbol>>
+<<mrosetta-parse-substring>>
+<<mrosetta-parse-substring-symbol>>
+<<mrosetta-parse-prefix>>
+<<mrosetta-parse-prefix-symbol>>
+<<mrosetta-parse-suffix>>
+<<mrosetta-parse-suffix-symbol>>
+<<mrosetta-parse-contextual>>
+<<mrosetta-parse-contextual-symbol>>
+<<mrosetta-parse-modifier-uppercase-symbol>>
+<<mrosetta-parse-modifier-lowercase-symbol>>
+<<mrosetta-parse-modifier>>
+<<mrosetta-parse-modifier-symbol>>
+<<mrosetta-parse-optionality>>
+<<mrosetta-parse-optionality-symbol>>
+<<mrosetta-parse-key>>
+<<mrosetta-parse-key-symbol>>
+<<mrosetta-parse-ignorable>>
+<<mrosetta-parse-ignorable-symbol>>
+<<mrosetta-parse-list>>
+<<mrosetta-parse-list-symbol>>
+<<mrosetta-parse-of>>
+<<mrosetta-parse-of-symbol>>
+
+<<mrosetta-parse>>
+<<mrosetta-compile>>
+<<mrosetta-process>>
+<<mrosetta-update>>
+
+mrosetta-mlsyntax
+#+END_SRC
+
+#+RESULTS: demo-init
+: ((of . mrosetta-parse-of) (list . mrosetta-parse-list) (ignorable . mrosetta-parse-ignorable) (as . mrosetta-parse-key) (optional . mrosetta-parse-optionality) (to . mrosetta-parse-modifier) (contextual . mrosetta-parse-contextual) (suffixed . mrosetta-parse-suffix) (prefixed . mrosetta-parse-prefix) (with . mrosetta-parse-substring) (paragraphs . mrosetta-parse-paragraph-plurality) (paragraph . mrosetta-parse-paragraph) (words . mrosetta-parse-word-plurality) (Word . mrosetta-parse-word-capitalized) (WORD . mrosetta-parse-word-uppercase) (word . mrosetta-parse-word) (literal . mrosetta-parse-literal))
 
 Note that by metalanguage syntax, the outermost expression is auto-parenthesized, thus making it a legitimate list expression.
 
