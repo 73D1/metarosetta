@@ -13,6 +13,8 @@
 ;;; Code:
 
 (require 'eieio)
+(require 'eieio-base)
+(require 'org)
 (require 'request)
 
 (defclass mrosetta-keychain ()
@@ -331,6 +333,13 @@
 
 (push '(list . mrosetta-parse-list) mrosetta-mlsyntax)
 
+(cl-defmethod mrosetta-parse-element ((mlexpression mrosetta-mlexpression) &rest args)
+  "Parse the element expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
+  (setf (slot-value mlexpression 'is-plural) t)
+  args)
+
+(push '(element . mrosetta-parse-element) mrosetta-mlsyntax)
+
 (cl-defmethod mrosetta-parse-of ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the sub-expression from :right arg within ARGS into the MLEXPRESSION instance in context."
   (let ((sub-expression (plist-get args :right)))
@@ -529,35 +538,50 @@
                    ;; Return the updated text
                    newtext)))))))
 
-(cl-defgeneric mrosetta-send (connector sdata &rest cparameters)
-  "Using the specified CONNECTOR, send the SDATA containing a list of processed text instances with specified connector-specific CPARAMETERS.")
+(defclass mrosetta-connector ()
+  ()
+  "A base class defining the general interface used to send/receive structured data defined by Metarosetta expressions."
+  :abstract t)
 
-(cl-defgeneric mrosetta-receive (connector &rest cparameters)
-  "Using the specified CONNECTOR, receive structured data with specified connector-specific CPARAMETERS.")
+(cl-defmethod mrosetta-connector-parameters ((connector-class (subclass mrosetta-connector)))
+  "Get the connector-specific expression parameters required for the CONNECTOR-CLASS. Return a list of parameter keywords."
+  (error "Connector implementation error: Method mrosetta-connector-parameters not implemented in `%s'" (symbol-name (eieio-class-name connector-class))))
 
-(defclass mrosetta-connector-coda ()
+(cl-defmethod mrosetta-connector-send ((connector mrosetta-connector) _key _sdata _callback _cparameters)
+  "Using the specified CONNECTOR, send the SDATA containing a list of processed text instances with specified connector-specific CPARAMETERS. The KEY defines the property symbol considered as an instance key, wherein the same-id instances are overwritten. Call back the CALLBACK function when done."
+  (error "Connector implementation error: Method mrosetta-connector-send not implemented in `%s'" (symbol-name (eieio-object-class-name connector))))
+
+(cl-defmethod mrosetta-connector-receive ((connector mrosetta-connector) _key _value _callback _cparameters)
+  "Using the specified CONNECTOR, receive structured data entries whose KEY equals to VALUE with specified connector-specific CPARAMETERS. Call back the CALLBACK function when done."
+  (error "Connector implementation error: Method mrosetta-connector-receive not implemented in `%s'" (symbol-name (eieio-object-class-name connector))))
+
+(defclass mrosetta-connector-coda (mrosetta-connector)
   ((token
     :initarg :token
     :type string
     :documentation "The bearer token used to authenticate against the Coda API."
     :reader mrosetta-connector-coda-token)))
 
-(defun mrosetta-connector-coda-get-status-code-handlers (callbackfn)
-  "By using the provided CALLBACKFN, generate the standard Coda API status code handlers in form of an alist."
-  `((400 . ,(lambda (&rest _) (funcall callbackfn nil :message "Parameters and/or payload invalid!")))
-    (401 . ,(lambda (&rest _) (funcall callbackfn nil :message "API token is invalid or has expired!")))
-    (403 . ,(lambda (&rest _) (funcall callbackfn nil :message "Beyond API token authorization scope!")))
-    (404 . ,(lambda (&rest _) (funcall callbackfn nil :message "Resource could not be located!")))
-    (429 . ,(lambda (&rest _) (funcall callbackfn nil :message "Sent too many requests!")))))
+(cl-defmethod mrosetta-connector-parameters ((_connector-class (subclass mrosetta-connector-coda)))
+  "Return the expression-related connector parameters of the Coda CONNETOR-CLASS."
+  `(:doc-id
+    :table-id))
 
-(cl-defmethod mrosetta-send ((connector mrosetta-connector-coda) sdata &rest cparameters)
-  "Using the specified Coda CONNECTOR, send the SDATA list of processed textual instances with specified CPARAMETERS. Specify :callback function for response callback."
+(cl-defmethod mrosetta-connector-status-code-handlers ((_connector-class (subclass mrosetta-connector-coda)) callback)
+  "In context of the CONNETOR-CLASS, by using the provided CALLBACK, generate the standard Coda API status code handlers in form of an alist."
+  `((400 . ,(lambda (&rest _) (funcall callback nil :message "Parameters and/or payload invalid!")))
+    (401 . ,(lambda (&rest _) (funcall callback nil :message "API token is invalid or has expired!")))
+    (403 . ,(lambda (&rest _) (funcall callback nil :message "Beyond API token authorization scope!")))
+    (404 . ,(lambda (&rest _) (funcall callback nil :message "Resource could not be located!")))
+    (429 . ,(lambda (&rest _) (funcall callback nil :message "Sent too many requests!")))))
+
+(cl-defmethod mrosetta-connector-send ((connector mrosetta-connector-coda) key sdata callback cparameters)
+  "Using the specified Coda CONNECTOR, send the SDATA list of processed textual instances, defined by the KEY property, with specified CPARAMETERS. Specify CALLBACK function for response callback."
   (let ((token (mrosetta-connector-coda-token connector))
         (doc-id (plist-get cparameters :doc-id))
         (table-id (plist-get cparameters :table-id))
         (payload `(("rows" . [])
-                   ("keyColumns" . ,(vector (symbol-name (plist-get cparameters :id-property))))))
-        (callback (plist-get cparameters :callback)))
+                   ("keyColumns" . ,(vector (symbol-name key))))))
     ;; Process the semantic data into a compatible payload structure, iterating over all provided instances within the semantic data structure
     (setf (cdr (assoc "rows" payload)) (vconcat (mapcar (lambda (instance)
                                                           ;; Map all property-value pairs to a payload-compatible format
@@ -578,18 +602,16 @@
       :data (json-serialize payload)
       :parser 'json-parse-string
       :status-code `((202 . ,(lambda (&rest _) (funcall callback t)))
-                     ,@(mrosetta-connector-coda-get-status-code-handlers callback)))))
+                     ,@(mrosetta-connector-status-code-handlers (eieio-object-class connector) callback)))))
 
-(cl-defmethod mrosetta-receive ((connector mrosetta-connector-coda) &rest cparameters)
-  "Using the specified Coda CONNECTOR, receive semantic data based on the query parameters of :property and :value within CPARAMETERS. Specify :callback function for response callback containing the requested data."
+(cl-defmethod mrosetta-connector-receive ((connector mrosetta-connector-coda) key value callback cparameters)
+  "Using the specified Coda CONNECTOR, receive semantic data based on the provided KEY property and corresponding VALUE, with specified CPARAMETERS. Specify CALLBACK function for response callback containing the requested data."
   (let* ((token (mrosetta-connector-coda-token connector))
          (doc-id (plist-get cparameters :doc-id))
          (table-id (plist-get cparameters :table-id))
-         (property (plist-get cparameters :property))
-         (pvalue (plist-get cparameters :pvalue))
+         ;; Method-internal connector parameters
          (page-token (plist-get cparameters :page-token))
-         (sdata (or (plist-get cparameters :sdata) '()))
-         (callback (plist-get cparameters :callback)))
+         (sdata (or (plist-get cparameters :sdata) '())))
     ;; Receive the data
     (request
       (concat "https://coda.io/apis/v1/docs/" doc-id "/tables/" table-id "/rows")
@@ -599,11 +621,11 @@
                   ;; Fetch the next page of the request in current context
                   `(("pageToken" . ,page-token))
                 ;; Create a new request based on parameter criteria
-                `(("query" . ,(concat "\"" (symbol-name property) "\""
+                `(("query" . ,(concat "\"" (symbol-name key) "\""
                                       ":"
-                                      (when (stringp pvalue) "\"")
-                                      pvalue
-                                      (when (stringp pvalue) "\"")))
+                                      (when (stringp value) "\"")
+                                      value
+                                      (when (stringp value) "\"")))
                   ("useColumnNames" . "true")
                   ("valueFormat" . "simpleWithArrays")))
       :parser 'json-parse-string
@@ -623,10 +645,13 @@
                                                                       payload-items))))
                                  (or (and next-page-token
                                           ;; Move on to the next page of data
-                                          (mrosetta-receive connector :doc-id doc-id :table-id table-id :page-token next-page-token :sdata sdata :callback callback))
+                                          (mrosetta-connector-receive connector key value callback `(:doc-id ,doc-id
+                                                                                                     :table-id ,table-id
+                                                                                                     :page-token ,next-page-token
+                                                                                                     :sdata ,sdata)))
                                      ;; No more pages, return the compiled data
                                      (funcall callback sdata)))))
-                     ,@(mrosetta-connector-coda-get-status-code-handlers callback)))))
+                     ,@(mrosetta-connector-status-code-handlers (eieio-object-class connector) callback)))))
 
 (defclass mrosetta-context-org-collection ()
   ((keychain
@@ -637,15 +662,17 @@
    (items
     :initform '()
     :type list
-    :documentation "The items contained within the encompassing collection instance."
+    :documentation "An alist of items contained within the encompassing collection instance."
     :reader mrosetta-context-org-collection-items))
   "A collection manager of tracked org entry items within a specific scope.")
 
 (cl-defmethod mrosetta-context-org-collection-set ((collection mrosetta-context-org-collection) item)
-  "Add or update the ITEM within the managed org COLLECTION."
-  (let* ((item-id (mrosetta-keychain-generate-key (mrosetta-context-org-collection-keychain collection)))
+  "Add or reset the ITEM within the managed org COLLECTION."
+  (let* ((item-id (or (mrosetta-context-org-entry-id item)
+                      (mrosetta-keychain-generate-key (mrosetta-context-org-collection-keychain collection))))
          (items (setf (slot-value collection 'items) (assq-delete-all item-id (slot-value collection 'items)))))
     (mrosetta-context-org-entry-id-set item item-id)
+    ;; Add the new item to collection
     (push `(,item-id . ,item) items)
     item))
 
@@ -656,7 +683,8 @@
 (defclass mrosetta-context-org-entry ()
   ((id
     :initarg :id
-    :type number
+    :initform 'nil
+    :type (or null number)
     :documentation "The entry identifier within the scope of its encompassing collection."
     :reader mrosetta-context-org-entry-id
     :writer mrosetta-context-org-entry-id-set)
@@ -670,10 +698,16 @@
 (defclass mrosetta-context-org-mlexpression (mrosetta-context-org-entry)
   ((mldefinition
     :initarg :mldefinition
-    :type string
+    :type list
     :documentation "The metalanguage definition referring to the org entry in context."
     :reader mrosetta-context-org-mlexpression-mldefinition
-    :writer mrosetta-context-org-mlexpressoin-mldefinition-set)
+    :writer mrosetta-context-org-mlexpression-mldefinition-set)
+   (cparameters
+    :initform '()
+    :type list
+    :documentation "The list of connector-specific parameters in form of an alist containing parameter-value pairs."
+    :reader mrosetta-context-org-mlexpression-cparameters
+    :writer mrosetta-context-org-mlexpression-cparameters-set)
    (matches
     :initform (mrosetta-context-org-collection)
     :type mrosetta-context-org-collection
@@ -681,36 +715,180 @@
     :reader mrosetta-context-org-mlexpression-matches))
   "An org entry referencing a particular metalanguage definition.")
 
-(defclass mrosetta-context-org-mlexpression-coda (mrosetta-context-org-mlexpression)
-  ((doc-id
-    :initarg :doc-id
-    :type string
-    :documentation "The Coda document's id as the target of match synchronization in context of the encompassing metalanguage expression."
-    :reader mrosetta-context-org-mlexpression-coda-doc-id)
-   (table-id
-    :initarg :table-id
-    :type string
-    :documentation "The Coda table's id as the target of match synchronization in context of the encompassing metalanguage expression."
-    :reader mrosetta-context-org-mlexpression-coda-table-id))
-  "A metalanguage expressoin org entry specific to entries compatible with the Coda connector.")
-
 (defclass mrosetta-context-org-match (mrosetta-context-org-entry)
   ((sync-id
     :initform '0
     :type number
     :documentation "A synchronization id specifying the exact version of the match. Each update, from any side, increments the sync id."
-    :reader mrosetta-context-org-match-sync-id
-    :writer mrosetta-context-org-match-sync-id-set))
+    :reader mrosetta-context-org-match-sync-id))
   "An org entry referencing a specific match in context of a particular metalanguage definition.")
 
-(defclass mrosetta-context-org-db (eieio-persistent)
+(cl-defmethod mrosetta-context-org-match-sync-update ((match mrosetta-context-org-match))
+  "Update the sync id of the MATCH."
+  (setf (slot-value match 'sync-id) (1+ (slot-value match 'sync-id))))
+
+(defclass mrosetta-context-org-index (eieio-persistent)
   ((file :initarg :file)
-   (expressions
+   (mlexpressions
     :initform (mrosetta-context-org-collection)
     :type mrosetta-context-org-collection
     :documentation "A managed collection of all defined and tracked metalanguage expressions in scope of the Metarosetta package."
-    :reader mrosetta-context-org-db-expressions))
+    :reader mrosetta-context-org-index-mlexpressions))
   "The root index object for all metalanguage definitions and matches within the org context.")
+
+(defclass mrosetta-context-org ()
+  ((index-file
+    :initarg :index-file
+    :type string
+    :documentation "The file to which the Metarosetta context will persist all current data from the corresponding index datastore."
+    :reader mrosetta-context-org-index-file)
+   (index
+    :type mrosetta-context-org-index
+    :documentation "The active datastore of the current Metarosetta context, containing all defined metalagnuage definitions with their respectively tracked matches."
+    :reader mrosetta-context-org-index)
+   (mlexpressions
+    :initform '()
+    :type list
+    :documentation "The current session's cache containing all compiled metalanguage expressions active in current context."
+    :reader mrosetta-context-org-mlexpressions)
+   (sync-interval
+    :initarg :sync-interval
+    :initform 'nil
+    :type (or null number)
+    :documentation "The synchronization interval for the current context. If non-nil, specifies the number of seconds between synchronization requests using the provided connector instance."
+    :reader mrosetta-context-org-sync-interval)
+   (connector
+    :initarg :connector
+    :type mrosetta-connector
+    :documentation "The connector instance to use within the current context"
+    :reader mrosetta-context-org-connector))
+  "The Metarosetta org context object. Handles all Metarosetta-related operations within the org context.")
+
+(cl-defmethod initialize-instance ((context mrosetta-context-org) &rest slots)
+  "Initialize the CONTEXT instance by loading the index datastore from file and compiling the Metalanguage expressions, as well as register for saving the index before killing Emacs. Pass along CONTEXT and SLOTS to the default method."
+  (let* ((initialized-context (apply #'cl-call-next-method context slots))
+         (file (slot-value initialized-context 'index-file)))
+    ;; Load the index datastore
+    (setf (slot-value initialized-context 'index) (or (eieio-persistent-read file 'mrosetta-context-org-index)
+                                                      (mrosetta-context-org-index :file file)))
+    ;; Compile the registered Metalanguage expressions
+    (setf (slot-value initialized-context 'mlexpressions)
+          (mapcar (lambda (org-mlexpression-pair)
+                    (let* ((org-mlexpression-id (car org-mlexpression-pair))
+                           (org-mlexpression-entry (cdr org-mlexpression-pair))
+                           (mlexpression (mrosetta-mlexpression :mldefinition (mrosetta-context-org-mlexpression-mldefinition org-mlexpression-entry))))
+                      ;; Parse and compile the metalanguage expression
+                      (mrosetta-parse mlexpression)
+                      (mrosetta-compile mlexpression)
+                      ;; Return the metalanguage expression pair
+                      `(,org-mlexpression-id . ,mlexpression)))
+                  (mrosetta-context-org-collection-items (mrosetta-context-org-index-mlexpressions (slot-value initialized-context 'index)))))
+    ;; Save the index datastore before killing Emacs
+    (add-hook 'kill-emacs-hook (lambda ()
+                                 (eieio-persistent-save (slot-value initialized-context 'index))))))
+
+(cl-defmethod mrosetta-context-org-process-heading ((context mrosetta-context-org))
+  "Process the heading at point by the provided Metarosetta CONTEXT."
+  (let ((heading-text (org-get-heading)))
+    (and heading-text
+         (or (and (string-match "#mrosetta[[:blank:]]+\\(.+\\)" heading-text)
+                  ;; Process the Metarosetta Metalanguage expression definition
+                  (let* ((input-text (match-string 1 heading-text))
+                         (mldefinition (car (read-from-string (concat "(" input-text ")"))))
+                         (mlexpression-id (let ((id-property (org-entry-get (point) "mrosetta-mlexpression-id")))
+                                            (when (and id-property
+                                                       (not (string-empty-p id-property)))
+                                              (string-to-number id-property))))
+                         (mlexpression-index (mrosetta-context-org-index-mlexpressions (mrosetta-context-org-index context)))
+                         (mlexpression-cache (setf (slot-value context 'mlexpressions)
+                                                   (assq-delete-all mlexpression-id (slot-value context 'mlexpressions))))
+                         (mlexpression-index-entry (or (let ((entry (mrosetta-context-org-collection-get mlexpression-index mlexpression-id)))
+                                                         (when entry
+                                                           (mrosetta-context-org-mlexpression-mldefinition-set entry mldefinition)
+                                                           entry))
+                                                       (mrosetta-context-org-mlexpression :org-file (buffer-file-name)
+                                                                                          :mldefinition mldefinition)))
+                         (mlexpression (mrosetta-mlexpression :mldefinition mldefinition))
+                         (connector (mrosetta-context-org-connector context))
+                         (cparameters (mrosetta-connector-parameters (eieio-object-class connector))))
+                    ;; Fetch connector-specific parameters from org-entry and update the object
+                    (mrosetta-context-org-mlexpression-cparameters-set mlexpression-index-entry
+                                                                       (mapcar (lambda (cparameter)
+                                                                                 `(,cparameter . ,(org-entry-get (point)
+                                                                                                                 (concat "mrosetta-mlexpression-connector-"
+                                                                                                                         ;; Convert keyword symbol to simple string
+                                                                                                                         (substring (symbol-name cparameter) 1)))))
+                                                                               cparameters))
+                    ;; Index the entry
+                    (setq mlexpression-index-entry (mrosetta-context-org-collection-set mlexpression-index mlexpression-index-entry))
+                    (setq mlexpression-id (mrosetta-context-org-entry-id mlexpression-index-entry))
+                    ;; Parse and compile the Metalanguage expression
+                    (mrosetta-parse mlexpression)
+                    (mrosetta-compile mlexpression)
+                    ;; Cache the Metalanguage expression
+                    (push `(,mlexpression-id . ,mlexpression) mlexpression-cache)
+                    ;; Populate the org entry istelf with Metarosetta properties
+                    ;; Expression ID
+                    (org-entry-put (point) "mrosetta-mlexpression-id" (number-to-string mlexpression-id))
+                    ;; Connector-specific parameters
+                    (dolist (cparameter-pair (mrosetta-context-org-mlexpression-cparameters mlexpression-index-entry))
+                      (let ((key (car cparameter-pair))
+                            (value (cdr cparameter-pair)))
+                        (org-entry-put (point)
+                                       (concat "mrosetta-mlexpression-connector-"
+                                               (substring (symbol-name key) 1))
+                                       (or value ""))))
+                    ;; Notify the user
+                    (message "Mrosetta Metalanguage expression processed successfully!")))
+             (let* ((mlexpression-cache (mrosetta-context-org-mlexpressions context))
+                    (mlexpression-ids (mapcar (lambda (mlexpression-pair) (car mlexpression-pair))
+                                              mlexpression-cache)))
+               ;; Check if provided heading matches any of the active Metalanguage expressions
+               (while (let ((mlexpression-id (pop mlexpression-ids)))
+                        (and mlexpression-id
+                             (let* ((mlexpression (cdr (assq mlexpression-id mlexpression-cache)))
+                                    (exdata (mrosetta-process mlexpression :text heading-text)))
+                               ;; If matched, sync through connector in context and stop iterating
+                               ;; If not, continue to the next possible Metalanguage expression match
+                               (not (and exdata
+                                         (let* ((sdata (cdr exdata))
+                                                (connector (mrosetta-context-org-connector context))
+                                                (mlexpression-index-entry (mrosetta-context-org-collection-get (mrosetta-context-org-index-mlexpressions (mrosetta-context-org-index context))
+                                                                                                               mlexpression-id))
+                                                (cparameters (mapcan (lambda (cparameter-pair)
+                                                                       `(,(car cparameter-pair) ,(cdr cparameter-pair)))
+                                                                     (mrosetta-context-org-mlexpression-cparameters mlexpression-index-entry)))
+                                                (mlexpression-matches (mrosetta-context-org-mlexpression-matches mlexpression-index-entry))
+                                                (match-id (let ((id-property (org-entry-get (point) "mrosetta-match-id")))
+                                                            (when (and id-property
+                                                                       (not (string-empty-p id-property)))
+                                                              (string-to-number id-property))))
+                                                (match-index-entry (or (mrosetta-context-org-collection-get mlexpression-matches match-id)
+                                                                       (mrosetta-context-org-match :org-file (buffer-file-name))))
+                                                (match-sync-id (mrosetta-context-org-match-sync-update match-index-entry)))
+                                           (prog1 t ;; Regardless if the sync actually succeeded, the match itself is valid and should return as such
+                                             ;; Add index entry, if new
+                                             (setq match-index-entry (mrosetta-context-org-collection-set mlexpression-matches match-index-entry))
+                                             (setq match-id (mrosetta-context-org-entry-id match-index-entry))
+                                             ;; Add sync metadata
+                                             (setq sdata `((id . ,match-id)
+                                                           (org-sync . ,t)
+                                                           (sync-id . ,match-sync-id)
+                                                           ,@sdata))
+                                             ;; Sync the processed semantic match data
+                                             (mrosetta-connector-send connector
+                                                                      'id
+                                                                      sdata
+                                                                      (lambda (did-succeed &rest params)
+                                                                        ;; Notify the user
+                                                                        (if did-succeed
+                                                                            (message "Mrosetta Metalanguage match synced successfully!")
+                                                                          (let ((msg (plist-get params :message)))
+                                                                            (message "Mrosetta sync error: %s" msg))))
+                                                                      cparameters)
+                                             ;; Update the org entry itself
+                                             (org-entry-put (point) "mrosetta-match-id" match-id)
+                                             (org-entry-put (point) "mrosetta-match-sync-id" match-sync-id))))))))))))))
 
 (provide 'metarosetta)
 
