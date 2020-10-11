@@ -720,7 +720,8 @@
     :initform '0
     :type number
     :documentation "A synchronization id specifying the exact version of the match. Each update, from any side, increments the sync id."
-    :reader mrosetta-context-org-match-sync-id))
+    :reader mrosetta-context-org-match-sync-id
+    :writer mrosetta-context-org-match-sync-id-set))
   "An org entry referencing a specific match in context of a particular metalanguage definition.")
 
 (cl-defmethod mrosetta-context-org-match-sync-update ((match mrosetta-context-org-match))
@@ -811,35 +812,36 @@
                          (mlexpression (mrosetta-mlexpression :mldefinition mldefinition))
                          (connector (mrosetta-context-org-connector context))
                          (cparameters (mrosetta-connector-parameters (eieio-object-class connector))))
-                    ;; Fetch connector-specific parameters from org-entry and update the object
-                    (mrosetta-context-org-mlexpression-cparameters-set mlexpression-index-entry
-                                                                       (mapcar (lambda (cparameter)
-                                                                                 `(,cparameter . ,(org-entry-get (point)
-                                                                                                                 (concat "mrosetta-mlexpression-connector-"
-                                                                                                                         ;; Convert keyword symbol to simple string
-                                                                                                                         (substring (symbol-name cparameter) 1)))))
-                                                                               cparameters))
-                    ;; Index the entry
-                    (setq mlexpression-index-entry (mrosetta-context-org-collection-set mlexpression-index mlexpression-index-entry))
-                    (setq mlexpression-id (mrosetta-context-org-entry-id mlexpression-index-entry))
-                    ;; Parse and compile the Metalanguage expression
-                    (mrosetta-parse mlexpression)
-                    (mrosetta-compile mlexpression)
-                    ;; Cache the Metalanguage expression
-                    (push `(,mlexpression-id . ,mlexpression) mlexpression-cache)
-                    ;; Populate the org entry istelf with Metarosetta properties
-                    ;; Expression ID
-                    (org-entry-put (point) "mrosetta-mlexpression-id" (number-to-string mlexpression-id))
-                    ;; Connector-specific parameters
-                    (dolist (cparameter-pair (mrosetta-context-org-mlexpression-cparameters mlexpression-index-entry))
-                      (let ((key (car cparameter-pair))
-                            (value (cdr cparameter-pair)))
-                        (org-entry-put (point)
-                                       (concat "mrosetta-mlexpression-connector-"
-                                               (substring (symbol-name key) 1))
-                                       (or value ""))))
-                    ;; Notify the user
-                    (message "Mrosetta Metalanguage expression processed successfully!")))
+                    (prog1 t ;; Regardless of the processing result, the match itself is valid and should return as such
+                      ;; Fetch connector-specific parameters from org-entry and update the object
+                      (mrosetta-context-org-mlexpression-cparameters-set mlexpression-index-entry
+                                                                         (mapcar (lambda (cparameter)
+                                                                                   `(,cparameter . ,(org-entry-get (point)
+                                                                                                                   (concat "mrosetta-mlexpression-connector-"
+                                                                                                                           ;; Convert keyword symbol to simple string
+                                                                                                                           (substring (symbol-name cparameter) 1)))))
+                                                                                 cparameters))
+                      ;; Index the entry
+                      (setq mlexpression-index-entry (mrosetta-context-org-collection-set mlexpression-index mlexpression-index-entry))
+                      (setq mlexpression-id (mrosetta-context-org-entry-id mlexpression-index-entry))
+                      ;; Parse and compile the Metalanguage expression
+                      (mrosetta-parse mlexpression)
+                      (mrosetta-compile mlexpression)
+                      ;; Cache the Metalanguage expression
+                      (push `(,mlexpression-id . ,mlexpression) mlexpression-cache)
+                      ;; Populate the org entry istelf with Metarosetta properties
+                      ;; Expression ID
+                      (org-entry-put (point) "mrosetta-mlexpression-id" (number-to-string mlexpression-id))
+                      ;; Connector-specific parameters
+                      (dolist (cparameter-pair (mrosetta-context-org-mlexpression-cparameters mlexpression-index-entry))
+                        (let ((key (car cparameter-pair))
+                              (value (cdr cparameter-pair)))
+                          (org-entry-put (point)
+                                         (concat "mrosetta-mlexpression-connector-"
+                                                 (substring (symbol-name key) 1))
+                                         (or value ""))))
+                      ;; Notify the user
+                      (message "Mrosetta Metalanguage expression processed successfully!"))))
              (let* ((mlexpression-cache (mrosetta-context-org-mlexpressions context))
                     (mlexpression-ids (mapcar (lambda (mlexpression-pair) (car mlexpression-pair))
                                               mlexpression-cache)))
@@ -871,24 +873,103 @@
                                              (setq match-index-entry (mrosetta-context-org-collection-set mlexpression-matches match-index-entry))
                                              (setq match-id (mrosetta-context-org-entry-id match-index-entry))
                                              ;; Add sync metadata
-                                             (setq sdata `((id . ,match-id)
-                                                           (org-sync . ,t)
-                                                           (sync-id . ,match-sync-id)
+                                             (setq sdata `((org-id . ,match-id)
+                                                           (org-sync . "yes")
+                                                           (org-did-sync . "yes")
+                                                           (org-sync-id . ,match-sync-id)
                                                            ,@sdata))
                                              ;; Sync the processed semantic match data
                                              (mrosetta-connector-send connector
-                                                                      'id
-                                                                      sdata
+                                                                      ;; The identifier property symbol
+                                                                      'org-id
+                                                                      ;; The list of match instances to send
+                                                                      `(,sdata)
+                                                                      ;; Callback function
                                                                       (lambda (did-succeed &rest params)
                                                                         ;; Notify the user
                                                                         (if did-succeed
                                                                             (message "Mrosetta Metalanguage match synced successfully!")
                                                                           (let ((msg (plist-get params :message)))
-                                                                            (message "Mrosetta sync error: %s" msg))))
+                                                                            (message "Mrosetta send error: %s" msg))))
                                                                       cparameters)
                                              ;; Update the org entry itself
                                              (org-entry-put (point) "mrosetta-match-id" match-id)
                                              (org-entry-put (point) "mrosetta-match-sync-id" match-sync-id))))))))))))))
+
+(cl-defmethod mrosetta-context-org-update ((context mrosetta-context-org))
+  "Update all tracked org heading entries within CONTEXT."
+  (let ((mlexpression-index (mrosetta-context-org-index-mlexpressions (mrosetta-context-org-index context)))
+        (mlexpression-cache (mrosetta-context-org-mlexpressions context))
+        (connector (mrosetta-context-org-connector context)))
+    ;; Update all tracked matches accross all defined Metalanguage expressions
+    (dolist (mlexpression-index-entry (mrosetta-context-org-collection-items mlexpression-index))
+      (let* ((mlexpression-id (mrosetta-context-org-entry-id mlexpression-index-entry))
+             (mlexpression-matches (mrosetta-context-org-mlexpression-matches mlexpression-index-entry))
+             (cparameters (mapcan (lambda (cparameter-pair)
+                                    `(,(car cparameter-pair) ,(cdr cparameter-pair)))
+                                  (mrosetta-context-org-mlexpression-cparameters mlexpression-index-entry)))
+             (mlexpression (cdr (assq mlexpression-id mlexpression-cache))))
+        ;; Fetch any match instances marked as unsynced
+        (mrosetta-connector-receive connector
+                                    ;; The query property symbol
+                                    'org-did-sync
+                                    ;; The query property value to match
+                                    "no"
+                                    ;; Callback function
+                                    (lambda (sdata &rest params)
+                                      (if sdata
+                                          (let ((match-sync-ids '()))
+                                            (dolist (instance-data sdata)
+                                              (let* ((exdata `(,(mrosetta-mlexpression-key mlexpression) . ,instance-data))
+                                                     (match-id (cdr (assq 'org-id instance-data)))
+                                                     (match-sync-id (cdr (assq 'org-sync-id instance-data)))
+                                                     (match-index-entry (mrosetta-context-org-collection-get mlexpression-matches match-id))
+                                                     (match-org-file (mrosetta-context-org-entry-file match-index-entry)))
+                                                ;; Push match ID for response payload
+                                                (push `(,match-id . ,match-sync-id) match-sync-ids)
+                                                ;; Update the org heading
+                                                (org-map-entries (lambda ()
+                                                                   (let* ((heading-text (org-get-heading))
+                                                                          (updated-heading-text (mrosetta-update mlexpression
+                                                                                                                 :text heading-text
+                                                                                                                 :sdata exdata)))
+                                                                     ;; Update the heading text
+                                                                     (while (or (char-equal (following-char) ?*)
+                                                                                (char-equal (following-char) ?\s))
+                                                                       ;; Skip the heading markup
+                                                                       (forward-char))
+                                                                     (delete-region (point) (line-end-position))
+                                                                     (insert updated-heading-text)
+                                                                     ;; Update the heading properties
+                                                                     (org-entry-put (point) "mrosetta-match-sync-id" match-sync-id)
+                                                                     ;; Update the match index entry
+                                                                     (mrosetta-context-org-match-sync-id-set match-index-entry match-sync-id)
+                                                                     ;; Notify the user
+                                                                     (message "Mrosetta Metalanguage match with id %s updated in file %s!"
+                                                                              (number-to-string match-id)
+                                                                              (number-to-string match-org-file))))
+                                                                 (concat "+mrosetta-match-id="
+                                                                         "\"" match-id "\"")
+                                                                 `(,match-org-file))))
+                                            ;; Send response confirmation
+                                            (let ((response-sdata (mapcar (lambda (match-sync-id-pair)
+                                                                            `((org-id . ,(car match-sync-id-pair))
+                                                                              (org-did-sync . "yes")
+                                                                              (org-sync-id . ,(cdr match-sync-id-pair))))
+                                                                          match-sync-ids)))
+                                              (mrosetta-connector-send connector
+                                                                       'org-id
+                                                                       response-sdata
+                                                                       (lambda (did-succeed &rest params)
+                                                                         (if did-succeed
+                                                                             (message "Mrosetta update for Metalanguage expression with id %s confirmed successfully!"
+                                                                                      (number-to-string mlexpression-id))
+                                                                           (let ((msg (plist-get params :message)))
+                                                                             (message "Mrosetta send error: %s" msg))))
+                                                                       cparameters)))
+                                        (let ((msg (plist-get params :message)))
+                                          (message "Mrosetta receive error: %s" msg))))
+                                    cparameters)))))
 
 (provide 'metarosetta)
 
