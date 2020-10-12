@@ -728,13 +728,13 @@
   "Update the sync id of the MATCH."
   (setf (slot-value match 'sync-id) (1+ (slot-value match 'sync-id))))
 
-(defclass mrosetta-context-org-index (eieio-persistent)
+(defclass mrosetta-context-org-db (eieio-persistent)
   ((file :initarg :file)
    (mlexpressions
     :initform (mrosetta-context-org-collection)
     :type mrosetta-context-org-collection
     :documentation "A managed collection of all defined and tracked metalanguage expressions in scope of the Metarosetta package."
-    :reader mrosetta-context-org-index-mlexpressions))
+    :reader mrosetta-context-org-db-mlexpressions))
   "The root index object for all metalanguage definitions and matches within the org context.")
 
 (defclass mrosetta-context-org ()
@@ -744,7 +744,7 @@
     :documentation "The file to which the Metarosetta context will persist all current data from the corresponding index datastore."
     :reader mrosetta-context-org-index-file)
    (index
-    :type mrosetta-context-org-index
+    :type mrosetta-context-org-db
     :documentation "The active datastore of the current Metarosetta context, containing all defined metalagnuage definitions with their respectively tracked matches."
     :reader mrosetta-context-org-index)
    (mlexpressions
@@ -753,7 +753,6 @@
     :documentation "The current session's cache containing all compiled metalanguage expressions active in current context."
     :reader mrosetta-context-org-mlexpressions)
    (sync-interval
-    :initarg :sync-interval
     :initform 'nil
     :type (or null number)
     :documentation "The synchronization interval for the current context. If non-nil, specifies the number of seconds between synchronization requests using the provided connector instance."
@@ -770,8 +769,8 @@
   (let* ((initialized-context (apply #'cl-call-next-method context slots))
          (file (slot-value initialized-context 'index-file)))
     ;; Load the index datastore
-    (setf (slot-value initialized-context 'index) (or (eieio-persistent-read file 'mrosetta-context-org-index)
-                                                      (mrosetta-context-org-index :file file)))
+    (setf (slot-value initialized-context 'index) (or (eieio-persistent-read file 'mrosetta-context-org-db)
+                                                      (mrosetta-context-org-db :file file)))
     ;; Compile the registered Metalanguage expressions
     (setf (slot-value initialized-context 'mlexpressions)
           (mapcar (lambda (org-mlexpression-pair)
@@ -783,7 +782,7 @@
                       (mrosetta-compile mlexpression)
                       ;; Return the metalanguage expression pair
                       `(,org-mlexpression-id . ,mlexpression)))
-                  (mrosetta-context-org-collection-items (mrosetta-context-org-index-mlexpressions (slot-value initialized-context 'index)))))
+                  (mrosetta-context-org-collection-items (mrosetta-context-org-db-mlexpressions (slot-value initialized-context 'index)))))
     ;; Save the index datastore before killing Emacs
     (add-hook 'kill-emacs-hook (lambda ()
                                  (eieio-persistent-save (slot-value initialized-context 'index))))))
@@ -800,7 +799,7 @@
                                             (when (and id-property
                                                        (not (string-empty-p id-property)))
                                               (string-to-number id-property))))
-                         (mlexpression-index (mrosetta-context-org-index-mlexpressions (mrosetta-context-org-index context)))
+                         (mlexpression-index (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context)))
                          (mlexpression-cache (setf (slot-value context 'mlexpressions)
                                                    (assq-delete-all mlexpression-id (slot-value context 'mlexpressions))))
                          (mlexpression-index-entry (or (let ((entry (mrosetta-context-org-collection-get mlexpression-index mlexpression-id)))
@@ -855,7 +854,7 @@
                                (not (and exdata
                                          (let* ((sdata (cdr exdata))
                                                 (connector (mrosetta-context-org-connector context))
-                                                (mlexpression-index-entry (mrosetta-context-org-collection-get (mrosetta-context-org-index-mlexpressions (mrosetta-context-org-index context))
+                                                (mlexpression-index-entry (mrosetta-context-org-collection-get (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context))
                                                                                                                mlexpression-id))
                                                 (cparameters (mapcan (lambda (cparameter-pair)
                                                                        `(,(car cparameter-pair) ,(cdr cparameter-pair)))
@@ -898,7 +897,7 @@
 
 (cl-defmethod mrosetta-context-org-update ((context mrosetta-context-org))
   "Update all tracked org heading entries within CONTEXT."
-  (let ((mlexpression-index (mrosetta-context-org-index-mlexpressions (mrosetta-context-org-index context)))
+  (let ((mlexpression-index (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context)))
         (mlexpression-cache (mrosetta-context-org-mlexpressions context))
         (connector (mrosetta-context-org-connector context)))
     ;; Update all tracked matches accross all defined Metalanguage expressions
@@ -970,6 +969,27 @@
                                         (let ((msg (plist-get params :message)))
                                           (message "Mrosetta receive error: %s" msg))))
                                     cparameters)))))
+
+(cl-defmethod mrosetta-context-org-sync ((context mrosetta-context-org))
+  "Update all tracked org headings of defined Metalanguage expressions within provided CONTEXT. Repeat every SYNC-INTERVAL specified within the CONTEXT slot, or nil for no repitition."
+  (let ((sync-interval (mrosetta-context-org-sync-interval context)))
+    ;; Run update within context
+    (mrosetta-context-org-update context)
+    ;; Schedule next update, if sync-interval set
+    (when sync-interval
+      (run-at-time (format "%s min" (number-to-string sync-interval))
+                   nil
+                   #'mrosetta-context-org-sync
+                   context))))
+
+(cl-defmethod mrosetta-context-org-sync-start ((context mrosetta-context-org) sync-interval)
+  "Commence with periodic synchronization within the specified CONTEXT. SYNC-INTERVAL specifies the synchronization interval in minutes."
+  (when (setf (slot-value context 'sync-interval) sync-interval)
+    (mrosetta-context-org-sync context)))
+
+(cl-defmethod mrosetta-context-org-sync-stop ((context mrosetta-context-org))
+  "Stop the periodic synchronization within the specified CONTEXT."
+  (setf (slot-value context 'sync-interval) nil))
 
 (provide 'metarosetta)
 

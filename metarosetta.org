@@ -1907,15 +1907,15 @@ Confirm successful synchronization by updating the sync id of the match.
 **** Index Persistence
 A datastore object used as an entry point for the indexed data, as well as a point of serialization to and deserialization from the disk.
 
-#+NAME: mrosetta-context-org-index
+#+NAME: mrosetta-context-org-db
 #+BEGIN_SRC emacs-lisp :tangle yes
-(defclass mrosetta-context-org-index (eieio-persistent)
+(defclass mrosetta-context-org-db (eieio-persistent)
   ((file :initarg :file)
    (mlexpressions
     :initform (mrosetta-context-org-collection)
     :type mrosetta-context-org-collection
     :documentation "A managed collection of all defined and tracked metalanguage expressions in scope of the Metarosetta package."
-    :reader mrosetta-context-org-index-mlexpressions))
+    :reader mrosetta-context-org-db-mlexpressions))
   "The root index object for all metalanguage definitions and matches within the org context.")
 #+END_SRC
 *** Context Object
@@ -1930,7 +1930,7 @@ The object handling all Metarosetta-related operations within the org context.
     :documentation "The file to which the Metarosetta context will persist all current data from the corresponding index datastore."
     :reader mrosetta-context-org-index-file)
    (index
-    :type mrosetta-context-org-index
+    :type mrosetta-context-org-db
     :documentation "The active datastore of the current Metarosetta context, containing all defined metalagnuage definitions with their respectively tracked matches."
     :reader mrosetta-context-org-index)
    (mlexpressions
@@ -1939,7 +1939,6 @@ The object handling all Metarosetta-related operations within the org context.
     :documentation "The current session's cache containing all compiled metalanguage expressions active in current context."
     :reader mrosetta-context-org-mlexpressions)
    (sync-interval
-    :initarg :sync-interval
     :initform 'nil
     :type (or null number)
     :documentation "The synchronization interval for the current context. If non-nil, specifies the number of seconds between synchronization requests using the provided connector instance."
@@ -1962,8 +1961,8 @@ Defining proper context initialization.
   (let* ((initialized-context (apply #'cl-call-next-method context slots))
          (file (slot-value initialized-context 'index-file)))
     ;; Load the index datastore
-    (setf (slot-value initialized-context 'index) (or (eieio-persistent-read file 'mrosetta-context-org-index)
-                                                      (mrosetta-context-org-index :file file)))
+    (setf (slot-value initialized-context 'index) (or (eieio-persistent-read file 'mrosetta-context-org-db)
+                                                      (mrosetta-context-org-db :file file)))
     ;; Compile the registered Metalanguage expressions
     (setf (slot-value initialized-context 'mlexpressions)
           (mapcar (lambda (org-mlexpression-pair)
@@ -1975,7 +1974,7 @@ Defining proper context initialization.
                       (mrosetta-compile mlexpression)
                       ;; Return the metalanguage expression pair
                       `(,org-mlexpression-id . ,mlexpression)))
-                  (mrosetta-context-org-collection-items (mrosetta-context-org-index-mlexpressions (slot-value initialized-context 'index)))))
+                  (mrosetta-context-org-collection-items (mrosetta-context-org-db-mlexpressions (slot-value initialized-context 'index)))))
     ;; Save the index datastore before killing Emacs
     (add-hook 'kill-emacs-hook (lambda ()
                                  (eieio-persistent-save (slot-value initialized-context 'index))))))
@@ -2000,7 +1999,7 @@ Process the org heading at point.
                                             (when (and id-property
                                                        (not (string-empty-p id-property)))
                                               (string-to-number id-property))))
-                         (mlexpression-index (mrosetta-context-org-index-mlexpressions (mrosetta-context-org-index context)))
+                         (mlexpression-index (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context)))
                          (mlexpression-cache (setf (slot-value context 'mlexpressions)
                                                    (assq-delete-all mlexpression-id (slot-value context 'mlexpressions))))
                          (mlexpression-index-entry (or (let ((entry (mrosetta-context-org-collection-get mlexpression-index mlexpression-id)))
@@ -2055,7 +2054,7 @@ Process the org heading at point.
                                (not (and exdata
                                          (let* ((sdata (cdr exdata))
                                                 (connector (mrosetta-context-org-connector context))
-                                                (mlexpression-index-entry (mrosetta-context-org-collection-get (mrosetta-context-org-index-mlexpressions (mrosetta-context-org-index context))
+                                                (mlexpression-index-entry (mrosetta-context-org-collection-get (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context))
                                                                                                                mlexpression-id))
                                                 (cparameters (mapcan (lambda (cparameter-pair)
                                                                        `(,(car cparameter-pair) ,(cdr cparameter-pair)))
@@ -2103,7 +2102,7 @@ Sync all tracked matches with the specified connector endpoint.
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-context-org-update ((context mrosetta-context-org))
   "Update all tracked org heading entries within CONTEXT."
-  (let ((mlexpression-index (mrosetta-context-org-index-mlexpressions (mrosetta-context-org-index context)))
+  (let ((mlexpression-index (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context)))
         (mlexpression-cache (mrosetta-context-org-mlexpressions context))
         (connector (mrosetta-context-org-connector context)))
     ;; Update all tracked matches accross all defined Metalanguage expressions
@@ -2179,8 +2178,117 @@ Sync all tracked matches with the specified connector endpoint.
 ***** Sync
 Periodically sync local org entries with remote connector endpoints defined within respective Metalanguage expression declarations.
 
+#+NAME: mrosetta-context-org-sync
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-context-org-sync ((context mrosetta-context-org))
+  "Update all tracked org headings of defined Metalanguage expressions within provided CONTEXT. Repeat every SYNC-INTERVAL specified within the CONTEXT slot, or nil for no repitition."
+  (let ((sync-interval (mrosetta-context-org-sync-interval context)))
+    ;; Run update within context
+    (mrosetta-context-org-update context)
+    ;; Schedule next update, if sync-interval set
+    (when sync-interval
+      (run-at-time (format "%s min" (number-to-string sync-interval))
+                   nil
+                   #'mrosetta-context-org-sync
+                   context))))
+#+END_SRC
 
-* Setup Example
+To start sync, call ~mrosetta-context-org-sync-start~ on the ~context~ object with the specified sync interval in minutes.
+
+#+NAME: mrosetta-context-org-sync-start
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-context-org-sync-start ((context mrosetta-context-org) sync-interval)
+  "Commence with periodic synchronization within the specified CONTEXT. SYNC-INTERVAL specifies the synchronization interval in minutes."
+  (when (setf (slot-value context 'sync-interval) sync-interval)
+    (mrosetta-context-org-sync context)))
+#+END_SRC
+
+To stop sync, call ~mrosetta-context-org-sync-stop~ on the ~context~ object.
+
+#+NAME: mrosetta-context-org-sync-stop
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-context-org-sync-stop ((context mrosetta-context-org))
+  "Stop the periodic synchronization within the specified CONTEXT."
+  (setf (slot-value context 'sync-interval) nil))
+#+END_SRC
+* Configuration Example
+An example configuration of Metarosetta within an Emacs configuration file.
+
+#+NAME: config-init
+#+BEGIN_SRC emacs-lisp :noweb yes :session mrosetta-config
+<<demo-init>>
+
+<<mrosetta-connector>>
+<<mrosetta-connector-parameters>>
+<<mrosetta-connector-send>>
+<<mrosetta-connector-receive>>
+
+<<mrosetta-connector-coda>>
+<<mrosetta-connector-coda-parameters>>
+<<mrosetta-connector-coda-get-status-code-handlers>>
+<<mrosetta-connector-coda-send>>
+<<mrosetta-connector-coda-raceive>>
+
+<<mrosetta-context-org-collection>>
+<<mrosetta-context-org-collection-set>>
+<<mrosetta-context-org-collection-get>>
+
+<<mrosetta-context-org-entry>>
+<<mrosetta-context-org-mlexpression>>
+<<mrosetta-context-org-match>>
+<<mrosetta-context-org-match-sync-update>>
+
+<<mrosetta-context-org-db>>
+
+<<mrosetta-context-org>>
+<<mrosetta-context-org-initializer>>
+<<mrosetta-context-org-process>>
+<<mrosetta-context-org-update>>
+<<mrosetta-context-org-sync>>
+<<mrosetta-context-org-sync-start>>
+<<mrosetta-context-org-sync-stop>>
+
+"Mrosetta components loaded successfully!"
+#+END_SRC
+
+#+RESULTS: config-init
+: Mrosetta components loaded successfully!
+
+** Setup
+Set up and initialize the Metarosetta org context.
+
+#+NAME: config-token
+#+BEGIN_EXAMPLE
+<coda-api-token>
+#+END_EXAMPLE
+
+#+NAME: config-setup
+#+BEGIN_SRC emacs-lisp :session mrosetta-config :var token=config-token
+(defvar mrosetta-context-org-default (mrosetta-context-org :index-file "~/org/mrosetta-index.db"
+                                                           :connector (mrosetta-connector-coda :token token)))
+#+END_SRC
+** Process Heading
+A simple keymap definition to trigger Metarosetta on a specific org heading.
+
+#+NAME: config-process-heading
+#+BEGIN_SRC emacs-lisp :session mrosetta-config
+(map! :map org-mode-map
+      :n "s-return" (lambda () (mrosetta-context-org-process-heading mrosetta-context-org-default)))
+#+END_SRC
+** Sync
+Start synchronization every 5 minutes.
+
+#+NAME: config-sync-start
+#+BEGIN_SRC emacs-lisp :session mrosetta-config
+(mrosetta-context-org-sync-start mrosetta-context-org-default 5)
+#+END_SRC
+
+Stop synchronization.
+
+#+NAME: config-sync-stop
+#+BEGIN_SRC emacs-lisp :session mrosetta-config
+(mrosetta-context-org-sync-stop mrosetta-context-org-default)
+#+END_SRC
 * Registration
 #+NAME: registration
 #+BEGIN_SRC emacs-lisp :tangle yes
