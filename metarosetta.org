@@ -155,7 +155,6 @@ To manage this, each tree has a single /keychain/ instance shared across all exp
  :reader mrosetta-mlexpression-rkeychain)
 #+END_SRC
 
-
 ***** Regular Expression
 The compiled regular expression of the metalanguage expression in context.
 
@@ -1956,15 +1955,15 @@ Defining proper context initialization.
 
 #+NAME: mrosetta-context-org-initializer
 #+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod initialize-instance ((context mrosetta-context-org) &rest slots)
-  "Initialize the CONTEXT instance by loading the index datastore from file and compiling the Metalanguage expressions, as well as register for saving the index before killing Emacs. Pass along CONTEXT and SLOTS to the default method."
-  (let* ((initialized-context (apply #'cl-call-next-method context slots))
-         (file (slot-value initialized-context 'index-file)))
+(cl-defmethod initialize-instance :after ((context mrosetta-context-org) &rest _slots)
+  "Initialize the CONTEXT instance by loading the index datastore from file and compiling the Metalanguage expressions, as well as register for saving the index before killing Emacs."
+  (let* ((file (slot-value context 'index-file)))
     ;; Load the index datastore
-    (setf (slot-value initialized-context 'index) (or (eieio-persistent-read file 'mrosetta-context-org-db)
-                                                      (mrosetta-context-org-db :file file)))
+    (setf (slot-value context 'index) (or (when (file-exists-p file)
+                                            (eieio-persistent-read file 'mrosetta-context-org-db))
+                                          (mrosetta-context-org-db :file file)))
     ;; Compile the registered Metalanguage expressions
-    (setf (slot-value initialized-context 'mlexpressions)
+    (setf (slot-value context 'mlexpressions)
           (mapcar (lambda (org-mlexpression-pair)
                     (let* ((org-mlexpression-id (car org-mlexpression-pair))
                            (org-mlexpression-entry (cdr org-mlexpression-pair))
@@ -1974,11 +1973,13 @@ Defining proper context initialization.
                       (mrosetta-compile mlexpression)
                       ;; Return the metalanguage expression pair
                       `(,org-mlexpression-id . ,mlexpression)))
-                  (mrosetta-context-org-collection-items (mrosetta-context-org-db-mlexpressions (slot-value initialized-context 'index)))))
+                  (mrosetta-context-org-collection-items (mrosetta-context-org-db-mlexpressions (slot-value context 'index)))))
     ;; Save the index datastore before killing Emacs
     (add-hook 'kill-emacs-hook (lambda ()
-                                 (eieio-persistent-save (slot-value initialized-context 'index))))))
+                                 (let ((index (slot-value context 'index)))
+                                   (eieio-persistent-save index))))))
 #+END_SRC
+
 **** Handler Functions
 This section covers the operational functionality of the org context.
 
@@ -2259,7 +2260,7 @@ Set up and initialize the Metarosetta org context.
 
 #+NAME: config-token
 #+BEGIN_EXAMPLE
-<coda-api-token>
+76d4327a-5bbb-437f-bd15-affc1170d041
 #+END_EXAMPLE
 
 #+NAME: config-setup
@@ -2267,14 +2268,19 @@ Set up and initialize the Metarosetta org context.
 (defvar mrosetta-context-org-default (mrosetta-context-org :index-file "~/org/mrosetta-index.db"
                                                            :connector (mrosetta-connector-coda :token token)))
 #+END_SRC
+
+#+RESULTS: config-setup
+: mrosetta-context-org-default
+
 ** Process Heading
 A simple keymap definition to trigger Metarosetta on a specific org heading.
 
 #+NAME: config-process-heading
 #+BEGIN_SRC emacs-lisp :session mrosetta-config
 (map! :map org-mode-map
-      :n "s-return" (lambda () (mrosetta-context-org-process-heading mrosetta-context-org-default)))
+      :n "s-RET" (lambda () (mrosetta-context-org-process-heading mrosetta-context-org-default)))
 #+END_SRC
+
 ** Sync
 Start synchronization every 5 minutes.
 
