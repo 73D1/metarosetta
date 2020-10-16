@@ -54,6 +54,7 @@ The class itself is designed as a no-argument constructor as the key generator i
 #+BEGIN_SRC emacs-lisp :tangle yes
 (defclass mrosetta-keychain ()
   ((lastkey
+    :initarg :lastkey
     :initform '0
     :type number
     :documentation "The last key generated and assigned within the context of a single keychain instance."
@@ -1796,11 +1797,13 @@ A per-collection object used to manage items contained within along with their c
 #+BEGIN_SRC emacs-lisp :tangle yes
 (defclass mrosetta-context-org-collection ()
   ((keychain
+    :initarg :keychain
     :initform (mrosetta-keychain)
     :type mrosetta-keychain
     :documentation "The keychain instance used to generate item keys within the scope of the encompassing collection instance."
     :reader mrosetta-context-org-collection-keychain)
    (items
+    :initarg :items
     :initform '()
     :type list
     :documentation "An alist of items contained within the encompassing collection instance."
@@ -1815,12 +1818,12 @@ Add or update items within the collection instance.
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-context-org-collection-set ((collection mrosetta-context-org-collection) item)
   "Add or reset the ITEM within the managed org COLLECTION."
-  (let* ((item-id (or (mrosetta-context-org-entry-id item)
-                      (mrosetta-keychain-generate-key (mrosetta-context-org-collection-keychain collection))))
-         (items (setf (slot-value collection 'items) (assq-delete-all item-id (slot-value collection 'items)))))
+  (let ((item-id (or (mrosetta-context-org-entry-id item)
+                     (mrosetta-keychain-generate-key (mrosetta-context-org-collection-keychain collection)))))
     (mrosetta-context-org-entry-id-set item item-id)
-    ;; Add the new item to collection
-    (push `(,item-id . ,item) items)
+    ;; Add the new item to collection, potentially replacing an existing one
+    (setf (slot-value collection 'items) (assq-delete-all item-id (slot-value collection 'items)))
+    (push `(,item-id . ,item) (slot-value collection 'items))
     item))
 #+END_SRC
 ***** Getting Items
@@ -1867,12 +1870,14 @@ Naturally, updating this org entry within its original context automatically upd
     :reader mrosetta-context-org-mlexpression-mldefinition
     :writer mrosetta-context-org-mlexpression-mldefinition-set)
    (cparameters
+    :initarg :cparameters
     :initform '()
     :type list
     :documentation "The list of connector-specific parameters in form of an alist containing parameter-value pairs."
     :reader mrosetta-context-org-mlexpression-cparameters
     :writer mrosetta-context-org-mlexpression-cparameters-set)
    (matches
+    :initarg :matches
     :initform (mrosetta-context-org-collection)
     :type mrosetta-context-org-collection
     :documentation "The managed collection of all current matches corresponding to the metalanguage expression in context."
@@ -1886,6 +1891,7 @@ An index element referring to a matching org entry in context of a particular me
 #+BEGIN_SRC emacs-lisp :tangle yes
 (defclass mrosetta-context-org-match (mrosetta-context-org-entry)
   ((sync-id
+    :initarg :sync-id
     :initform '0
     :type number
     :documentation "A synchronization id specifying the exact version of the match. Each update, from any side, increments the sync id."
@@ -1911,6 +1917,7 @@ A datastore object used as an entry point for the indexed data, as well as a poi
 (defclass mrosetta-context-org-db (eieio-persistent)
   ((file :initarg :file)
    (mlexpressions
+    :initarg :mlexpressions
     :initform (mrosetta-context-org-collection)
     :type mrosetta-context-org-collection
     :documentation "A managed collection of all defined and tracked metalanguage expressions in scope of the Metarosetta package."
@@ -2011,8 +2018,6 @@ Process the org heading at point.
                                                        (not (string-empty-p id-property)))
                                               (string-to-number id-property))))
                          (mlexpression-index (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context)))
-                         (mlexpression-cache (setf (slot-value context 'mlexpressions)
-                                                   (assq-delete-all mlexpression-id (slot-value context 'mlexpressions))))
                          (mlexpression-index-entry (or (let ((entry (mrosetta-context-org-collection-get mlexpression-index mlexpression-id)))
                                                          (when entry
                                                            (mrosetta-context-org-mlexpression-mldefinition-set entry mldefinition)
@@ -2037,8 +2042,9 @@ Process the org heading at point.
                       ;; Parse and compile the Metalanguage expression
                       (mrosetta-parse mlexpression)
                       (mrosetta-compile mlexpression)
-                      ;; Cache the Metalanguage expression
-                      (push `(,mlexpression-id . ,mlexpression) mlexpression-cache)
+                      ;; Cache the Metalanguage expression, replacing the previous entry if needed
+                      (setf (slot-value context 'mlexpressions) (assq-delete-all mlexpression-id (slot-value context 'mlexpressions)))
+                      (push `(,mlexpression-id . ,mlexpression) (slot-value context 'mlexpressions))
                       ;; Populate the org entry istelf with Metarosetta properties
                       ;; Expression ID
                       (org-entry-put (point) "mrosetta-mlexpression-id" (number-to-string mlexpression-id))
@@ -2106,6 +2112,10 @@ Process the org heading at point.
                                              (org-entry-put (point) "mrosetta-match-id" match-id)
                                              (org-entry-put (point) "mrosetta-match-sync-id" match-sync-id))))))))))))))
 #+END_SRC
+
+#+RESULTS: mrosetta-context-org-process
+: mrosetta-context-org-process-heading
+
 ***** Update Org Heading
 Sync all tracked matches with the specified connector endpoint.
 
@@ -2225,7 +2235,7 @@ To stop sync, call ~mrosetta-context-org-sync-stop~ on the ~context~ object.
 * Configuration Example
 An example configuration of Metarosetta within an Emacs configuration file.
 
-#+NAME: config-init
+#+NAME: config-setup
 #+BEGIN_SRC emacs-lisp :noweb yes :session mrosetta-config
 <<demo-init>>
 
@@ -2263,6 +2273,9 @@ An example configuration of Metarosetta within an Emacs configuration file.
 "Mrosetta components loaded successfully!"
 #+END_SRC
 
+#+RESULTS: config-setup
+: Mrosetta components loaded successfully!
+
 ** Init
 Initialize a Metarosetta org context instance with the corresponding connector.
 
@@ -2275,6 +2288,10 @@ Initialize a Metarosetta org context instance with the corresponding connector.
 #+BEGIN_SRC emacs-lisp :session mrosetta-config :var token=config-token
 (defvar mrosetta-context-org-default (mrosetta-context-org :connector (mrosetta-connector-coda :token token)))
 #+END_SRC
+
+#+RESULTS: config-init
+: mrosetta-context-org-default
+
 ** Load
 Load the context before using it.
 
@@ -2283,6 +2300,10 @@ Load the context before using it.
 (add-hook 'org-mode-hook
           (lambda () (mrosetta-context-org-load mrosetta-context-org-default "~/org/mrosetta-index.db")))
 #+END_SRC
+
+#+RESULTS: config-load
+| (lambda nil (mrosetta-context-org-load mrosetta-context-org-default ~/org/mrosetta-index.db)) | er/add-org-mode-expansions | +lookup--init-org-mode-handlers-h | (closure (t) (&rest _) (add-hook 'before-save-hook 'org-encrypt-entries nil t)) | #[0 \301\211\207 [imenu-create-index-function org-imenu-get-tree] 2] | doom--setq-gcmh-high-cons-threshold-for-org-mode-h | #[0 \300\301\302\303\304$\207 [add-hook change-major-mode-hook org-show-all append local] 5] | #[0 \300\301\302\303\304$\207 [add-hook change-major-mode-hook org-babel-show-result-all append local] 5] | org-babel-result-hide-spec | org-babel-hide-all-hashes | doom-disable-show-paren-mode-h | doom-disable-show-trailing-whitespace-h | +org-enable-auto-reformat-tables-h | +org-enable-auto-update-cookies-h | +org-make-last-point-visible-h | evil-org-mode | toc-org-enable | flyspell-mode | embrace-org-mode-hook | org-eldoc-load |
+
 ** Save on Exit
 Save the current context index before quitting Emacs.
 
@@ -2291,6 +2312,10 @@ Save the current context index before quitting Emacs.
 (add-hook 'kill-emacs-hook
           (lambda () (mrosetta-context-org-save mrosetta-context-org-default)))
 #+END_SRC
+
+#+RESULTS: config-save
+| (lambda nil (mrosetta-context-org-save mrosetta-context-org-default)) | org-id-locations-save | org-babel-remove-temporary-directory | recentf-save-list | recentf-cleanup | save-place-kill-emacs-hook | transient-maybe-save-history | flycheck-global-teardown | doom-cleanup-project-cache-h | savehist-autosave | persp-kill-emacs-h | doom-persist-scratch-buffers-h | server-force-stop |
+
 ** Process Heading
 A simple keymap definition to trigger Metarosetta on a specific org heading.
 
@@ -2298,9 +2323,12 @@ A simple keymap definition to trigger Metarosetta on a specific org heading.
 #+BEGIN_SRC emacs-lisp :session mrosetta-config
 (map! :map org-mode-map
       :localleader
-      :desc "Process org heading in Metarosetta context"
-      :n "m" (lambda () (mrosetta-context-org-process-heading mrosetta-context-org-default)))
+      :desc "Metarosetta Heading"
+      :n "m" (cmd! (mrosetta-context-org-process-heading mrosetta-context-org-default)))
 #+END_SRC
+
+#+RESULTS: config-process-heading
+
 ** Sync
 Start synchronization every 5 minutes.
 

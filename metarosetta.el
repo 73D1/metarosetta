@@ -19,6 +19,7 @@
 
 (defclass mrosetta-keychain ()
   ((lastkey
+    :initarg :lastkey
     :initform '0
     :type number
     :documentation "The last key generated and assigned within the context of a single keychain instance."
@@ -655,11 +656,13 @@
 
 (defclass mrosetta-context-org-collection ()
   ((keychain
+    :initarg :keychain
     :initform (mrosetta-keychain)
     :type mrosetta-keychain
     :documentation "The keychain instance used to generate item keys within the scope of the encompassing collection instance."
     :reader mrosetta-context-org-collection-keychain)
    (items
+    :initarg :items
     :initform '()
     :type list
     :documentation "An alist of items contained within the encompassing collection instance."
@@ -668,12 +671,12 @@
 
 (cl-defmethod mrosetta-context-org-collection-set ((collection mrosetta-context-org-collection) item)
   "Add or reset the ITEM within the managed org COLLECTION."
-  (let* ((item-id (or (mrosetta-context-org-entry-id item)
-                      (mrosetta-keychain-generate-key (mrosetta-context-org-collection-keychain collection))))
-         (items (setf (slot-value collection 'items) (assq-delete-all item-id (slot-value collection 'items)))))
+  (let ((item-id (or (mrosetta-context-org-entry-id item)
+                     (mrosetta-keychain-generate-key (mrosetta-context-org-collection-keychain collection)))))
     (mrosetta-context-org-entry-id-set item item-id)
-    ;; Add the new item to collection
-    (push `(,item-id . ,item) items)
+    ;; Add the new item to collection, potentially replacing an existing one
+    (setf (slot-value collection 'items) (assq-delete-all item-id (slot-value collection 'items)))
+    (push `(,item-id . ,item) (slot-value collection 'items))
     item))
 
 (cl-defmethod mrosetta-context-org-collection-get ((collection mrosetta-context-org-collection) item-id)
@@ -703,12 +706,14 @@
     :reader mrosetta-context-org-mlexpression-mldefinition
     :writer mrosetta-context-org-mlexpression-mldefinition-set)
    (cparameters
+    :initarg :cparameters
     :initform '()
     :type list
     :documentation "The list of connector-specific parameters in form of an alist containing parameter-value pairs."
     :reader mrosetta-context-org-mlexpression-cparameters
     :writer mrosetta-context-org-mlexpression-cparameters-set)
    (matches
+    :initarg :matches
     :initform (mrosetta-context-org-collection)
     :type mrosetta-context-org-collection
     :documentation "The managed collection of all current matches corresponding to the metalanguage expression in context."
@@ -717,6 +722,7 @@
 
 (defclass mrosetta-context-org-match (mrosetta-context-org-entry)
   ((sync-id
+    :initarg :sync-id
     :initform '0
     :type number
     :documentation "A synchronization id specifying the exact version of the match. Each update, from any side, increments the sync id."
@@ -731,6 +737,7 @@
 (defclass mrosetta-context-org-db (eieio-persistent)
   ((file :initarg :file)
    (mlexpressions
+    :initarg :mlexpressions
     :initform (mrosetta-context-org-collection)
     :type mrosetta-context-org-collection
     :documentation "A managed collection of all defined and tracked metalanguage expressions in scope of the Metarosetta package."
@@ -807,8 +814,6 @@
                                                        (not (string-empty-p id-property)))
                                               (string-to-number id-property))))
                          (mlexpression-index (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context)))
-                         (mlexpression-cache (setf (slot-value context 'mlexpressions)
-                                                   (assq-delete-all mlexpression-id (slot-value context 'mlexpressions))))
                          (mlexpression-index-entry (or (let ((entry (mrosetta-context-org-collection-get mlexpression-index mlexpression-id)))
                                                          (when entry
                                                            (mrosetta-context-org-mlexpression-mldefinition-set entry mldefinition)
@@ -833,8 +838,9 @@
                       ;; Parse and compile the Metalanguage expression
                       (mrosetta-parse mlexpression)
                       (mrosetta-compile mlexpression)
-                      ;; Cache the Metalanguage expression
-                      (push `(,mlexpression-id . ,mlexpression) mlexpression-cache)
+                      ;; Cache the Metalanguage expression, replacing the previous entry if needed
+                      (setf (slot-value context 'mlexpressions) (assq-delete-all mlexpression-id (slot-value context 'mlexpressions)))
+                      (push `(,mlexpression-id . ,mlexpression) (slot-value context 'mlexpressions))
                       ;; Populate the org entry istelf with Metarosetta properties
                       ;; Expression ID
                       (org-entry-put (point) "mrosetta-mlexpression-id" (number-to-string mlexpression-id))
