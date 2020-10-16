@@ -739,12 +739,13 @@
 
 (defclass mrosetta-context-org ()
   ((index-file
-    :initarg :index-file
-    :type string
+    :initform 'nil
+    :type (or null string)
     :documentation "The file to which the Metarosetta context will persist all current data from the corresponding index datastore."
     :reader mrosetta-context-org-index-file)
    (index
-    :type mrosetta-context-org-db
+    :initform 'nil
+    :type (or null mrosetta-context-org-db)
     :documentation "The active datastore of the current Metarosetta context, containing all defined metalagnuage definitions with their respectively tracked matches."
     :reader mrosetta-context-org-index)
    (mlexpressions
@@ -764,28 +765,34 @@
     :reader mrosetta-context-org-connector))
   "The Metarosetta org context object. Handles all Metarosetta-related operations within the org context.")
 
-(cl-defmethod initialize-instance ((context mrosetta-context-org) &rest slots)
-  "Initialize the CONTEXT instance by loading the index datastore from file and compiling the Metalanguage expressions, as well as register for saving the index before killing Emacs. Pass along CONTEXT and SLOTS to the default method."
-  (let* ((initialized-context (apply #'cl-call-next-method context slots))
-         (file (slot-value initialized-context 'index-file)))
+(cl-defmethod mrosetta-context-org-load ((context mrosetta-context-org) index-file)
+  "If not already loaded or loaded with something else, (re)load the index datastore from INDEX-FILE, or create a new one if none exists, and compile all indexed Metalanguage expressions within the CONTEXT."
+  (when (or (not (slot-value context 'index-file))
+            (not (string-equal (slot-value context 'index-file)
+                               index-file)))
+    (setf (slot-value context 'index-file) index-file)
     ;; Load the index datastore
-    (setf (slot-value initialized-context 'index) (or (eieio-persistent-read file 'mrosetta-context-org-db)
-                                                      (mrosetta-context-org-db :file file)))
-    ;; Compile the registered Metalanguage expressions
-    (setf (slot-value initialized-context 'mlexpressions)
-          (mapcar (lambda (org-mlexpression-pair)
-                    (let* ((org-mlexpression-id (car org-mlexpression-pair))
-                           (org-mlexpression-entry (cdr org-mlexpression-pair))
-                           (mlexpression (mrosetta-mlexpression :mldefinition (mrosetta-context-org-mlexpression-mldefinition org-mlexpression-entry))))
-                      ;; Parse and compile the metalanguage expression
-                      (mrosetta-parse mlexpression)
-                      (mrosetta-compile mlexpression)
-                      ;; Return the metalanguage expression pair
-                      `(,org-mlexpression-id . ,mlexpression)))
-                  (mrosetta-context-org-collection-items (mrosetta-context-org-db-mlexpressions (slot-value initialized-context 'index)))))
-    ;; Save the index datastore before killing Emacs
-    (add-hook 'kill-emacs-hook (lambda ()
-                                 (eieio-persistent-save (slot-value initialized-context 'index))))))
+    (let ((index (setf (slot-value context 'index) (or (when (file-exists-p index-file)
+                                                         (eieio-persistent-read index-file 'mrosetta-context-org-db))
+                                                       (mrosetta-context-org-db :file index-file)))))
+      ;; Compile the registered Metalanguage expressions
+      (setf (slot-value context 'mlexpressions)
+            (mapcar (lambda (org-mlexpression-pair)
+                      (let* ((org-mlexpression-id (car org-mlexpression-pair))
+                             (org-mlexpression-entry (cdr org-mlexpression-pair))
+                             (mlexpression (mrosetta-mlexpression :mldefinition (mrosetta-context-org-mlexpression-mldefinition org-mlexpression-entry))))
+                        ;; Parse and compile the metalanguage expression
+                        (mrosetta-parse mlexpression)
+                        (mrosetta-compile mlexpression)
+                        ;; Return the metalanguage expression pair
+                        `(,org-mlexpression-id . ,mlexpression)))
+                    (mrosetta-context-org-collection-items (mrosetta-context-org-db-mlexpressions index))))))
+  ;; Just return the loaded context
+  context)
+
+(cl-defmethod mrosetta-context-org-save ((context mrosetta-context-org))
+  "Save CONTEXT index to the file defined within."
+  (eieio-persistent-save (slot-value context 'index)))
 
 (cl-defmethod mrosetta-context-org-process-heading ((context mrosetta-context-org))
   "Process the heading at point by the provided Metarosetta CONTEXT."
