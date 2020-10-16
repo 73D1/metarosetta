@@ -2263,9 +2263,6 @@ An example configuration of Metarosetta within an Emacs configuration file.
 "Mrosetta components loaded successfully!"
 #+END_SRC
 
-#+RESULTS: config-init
-: Mrosetta components loaded successfully!
-
 ** Init
 Initialize a Metarosetta org context instance with the corresponding connector.
 
