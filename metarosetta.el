@@ -659,20 +659,25 @@
     :initarg :keychain
     :initform (mrosetta-keychain)
     :type mrosetta-keychain
-    :documentation "The keychain instance used to generate item keys within the scope of the encompassing collection instance."
-    :reader mrosetta-context-org-collection-keychain)
+    :documentation "The keychain instance used to generate item keys within the scope of the encompassing collection instance.")
+   (item-class
+    :initarg :item-class
+    :type symbol
+    :documentation "The containing items' class symbol.")
    (items
-    :initarg :items
     :initform '()
     :type list
-    :documentation "An alist of items contained within the encompassing collection instance."
+    :documentation "An alist of items, mapped by id, contained within the encompassing collection instance."
     :reader mrosetta-context-org-collection-items))
-  "A collection manager of tracked org entry items within a specific scope.")
+  "A collection manager of tracked org entry items within a specific scope. Must be subclassed with items of specific type.")
 
 (cl-defmethod mrosetta-context-org-collection-set ((collection mrosetta-context-org-collection) item)
   "Add or reset the ITEM within the managed org COLLECTION."
+  (when (not (eq (slot-value collection 'item-class)
+                 (eieio-object-class item)))
+    (error "Collection class mismatch error: The provided item is incompatible with the encompassing collection"))
   (let ((item-id (or (mrosetta-context-org-entry-id item)
-                     (mrosetta-keychain-generate-key (mrosetta-context-org-collection-keychain collection)))))
+                     (mrosetta-keychain-generate-key (slot-value collection 'keychain)))))
     (mrosetta-context-org-entry-id-set item item-id)
     ;; Add the new item to collection, potentially replacing an existing one
     (setf (slot-value collection 'items) (assq-delete-all item-id (slot-value collection 'items)))
@@ -681,7 +686,7 @@
 
 (cl-defmethod mrosetta-context-org-collection-get ((collection mrosetta-context-org-collection) item-id)
   "Get an item from the COLLECTION defined by the provided ITEM-ID. Return the item or nil if none present."
-  (cdr (assq item-id (mrosetta-context-org-collection-items collection))))
+  (cdr (assq item-id (slot-value collection 'items))))
 
 (defclass mrosetta-context-org-entry ()
   ((id
@@ -696,7 +701,8 @@
     :type string
     :documentation "The org file within which the encompassing entry is set."
     :reader mrosetta-context-org-entry-file))
-  "An org entry reference matched within the Metarosetta framework.")
+  "An org entry reference matched within the Metarosetta framework."
+  :abstract t)
 
 (defclass mrosetta-context-org-mlexpression (mrosetta-context-org-entry)
   ((mldefinition
@@ -712,12 +718,17 @@
     :documentation "The list of connector-specific parameters in form of an alist containing parameter-value pairs."
     :reader mrosetta-context-org-mlexpression-cparameters
     :writer mrosetta-context-org-mlexpression-cparameters-set)
-   (matches
-    :initarg :matches
-    :initform (mrosetta-context-org-collection)
+   (match-collection
+    :initarg :match-collection
+    :initform (mrosetta-context-org-collection :item-class 'mrosetta-context-org-match)
     :type mrosetta-context-org-collection
     :documentation "The managed collection of all current matches corresponding to the metalanguage expression in context."
-    :reader mrosetta-context-org-mlexpression-matches))
+    :reader mrosetta-context-org-mlexpression-match-collection)
+   (match-compilation
+    :initarg :match-compilation
+    :initform '()
+    :type (list-of mrosetta-context-org-match)
+    :documentation "The compiled list corresponding to the collection of matches. Used only for (de)serialization."))
   "An org entry referencing a particular metalanguage definition.")
 
 (defclass mrosetta-context-org-match (mrosetta-context-org-entry)
@@ -736,13 +747,77 @@
 
 (defclass mrosetta-context-org-db (eieio-persistent)
   ((file :initarg :file)
-   (mlexpressions
-    :initarg :mlexpressions
-    :initform (mrosetta-context-org-collection)
+   (mlexpression-collection
+    :initarg :mlexpression-collection
+    :initform (mrosetta-context-org-collection :item-class 'mrosetta-context-org-mlexpression)
     :type mrosetta-context-org-collection
     :documentation "A managed collection of all defined and tracked metalanguage expressions in scope of the Metarosetta package."
-    :reader mrosetta-context-org-db-mlexpressions))
+    :reader mrosetta-context-org-db-mlexpression-collection)
+   (mlexpression-compilation
+    :initarg :mlexpression-compilation
+    :initform '()
+    :type (list-of mrosetta-context-org-mlexpression)
+    :documentation "The compiled list corresponding to the collection of mlexpressions. Used only for (de)serialization."))
   "The root index object for all metalanguage definitions and matches within the org context.")
+
+(cl-defgeneric mrosetta-context-org-compile (context-org-object)
+  "Compile the CONTEXT-ORG-OBJECT into a compatible format for serialization to disk.")
+
+(cl-defmethod mrosetta-context-org-compile ((collection mrosetta-context-org-collection))
+  "Recursively compile the items contained within the COLLECTION. Return the compiled list."
+  (mapcar (lambda (item-pair)
+            (let ((item (cdr item-pair)))
+              (mrosetta-context-org-compile item)))
+          (slot-value collection 'items)))
+
+(cl-defmethod mrosetta-context-org-compile ((entry mrosetta-context-org-entry))
+  "Compile the ENTRY for serialization to disk."
+  ;; Nothing to compile, all slots are directly compatible
+  entry)
+
+(cl-defmethod mrosetta-context-org-compile ((mlexpression-entry mrosetta-context-org-mlexpression))
+  "Compile the MLEXPRESSION-ENTRY for serialization to disk."
+  (setf (slot-value mlexpression-entry 'match-compilation)
+        (mrosetta-context-org-compile (slot-value mlexpression-entry 'match-collection)))
+  (cl-call-next-method mlexpression-entry))
+
+(cl-defmethod mrosetta-context-org-compile ((db mrosetta-context-org-db))
+  "Compile the root DB entry object for serialization to disk."
+  (setf (slot-value db 'mlexpression-compilation)
+        (mrosetta-context-org-compile (slot-value db 'mlexpression-collection)))
+  db)
+
+(cl-defgeneric mrosetta-context-org-decompile (context-org-object &optional compilation)
+  "Decompile the contents of the CONTEXT-ORG-OBJECT from the provided COMPILATION, or an inner slot if structured as such.")
+
+(cl-defmethod mrosetta-context-org-decompile ((collection mrosetta-context-org-collection) &optional compilation)
+  "Recursively decompile the COMPILATION of items into the COLLECTION."
+  (setf (slot-value collection 'items)
+        (mapcar (lambda (item)
+                  `(,(mrosetta-context-org-entry-id item) . ,(mrosetta-context-org-decompile item)))
+                compilation))
+  collection)
+
+(cl-defmethod mrosetta-context-org-decompile ((entry mrosetta-context-org-entry) &optional _compilation)
+  "Decompile the contents of the ENTRY from a compilation slot within, not the provided COMPILATION argument."
+  ;; Nothing to decompile, all slots are directly usable
+  entry)
+
+(cl-defmethod mrosetta-context-org-decompile ((mlexpression-entry mrosetta-context-org-mlexpression) &optional _compilation)
+  "Decompile the contents of the MLEXPRESSION-ENTRY from a compilation slot within, not the provided COMPILATION argument."
+  (mrosetta-context-org-decompile (slot-value mlexpression-entry 'match-collection)
+                                  (slot-value mlexpression-entry 'match-compilation))
+  ;; Clear the compiled list after decompilation
+  (setf (slot-value mlexpression-entry 'match-compilation) '())
+  (cl-call-next-method mlexpression-entry))
+
+(cl-defmethod mrosetta-context-org-decompile ((db mrosetta-context-org-db) &optional _compilation)
+  "Decompile the contents of DB from a compilation slot within, not the provided COMPILATION argument."
+  (mrosetta-context-org-decompile (slot-value db 'mlexpression-collection)
+                                  (slot-value db 'mlexpression-compilation))
+  ;; Clear the compiled list after decompilation
+  (setf (slot-value db 'mlexpression-compilation) '())
+  db)
 
 (defclass mrosetta-context-org ()
   ((index-file
@@ -782,7 +857,9 @@
     (let ((index (setf (slot-value context 'index) (or (when (file-exists-p index-file)
                                                          (eieio-persistent-read index-file 'mrosetta-context-org-db))
                                                        (mrosetta-context-org-db :file index-file)))))
-      ;; Compile the registered Metalanguage expressions
+      ;; Decompile index entries
+      (mrosetta-context-org-decompile index)
+      ;; Initialize the registered Metalanguage expression instances
       (setf (slot-value context 'mlexpressions)
             (mapcar (lambda (org-mlexpression-pair)
                       (let* ((org-mlexpression-id (car org-mlexpression-pair))
@@ -793,13 +870,17 @@
                         (mrosetta-compile mlexpression)
                         ;; Return the metalanguage expression pair
                         `(,org-mlexpression-id . ,mlexpression)))
-                    (mrosetta-context-org-collection-items (mrosetta-context-org-db-mlexpressions index))))))
+                    (mrosetta-context-org-collection-items (mrosetta-context-org-db-mlexpression-collection index))))))
   ;; Just return the loaded context
   context)
 
 (cl-defmethod mrosetta-context-org-save ((context mrosetta-context-org))
   "Save CONTEXT index to the file defined within."
-  (eieio-persistent-save (slot-value context 'index)))
+  (let ((index (slot-value context 'index)))
+    ;; Compile index entries into serializable form
+    (mrosetta-context-org-compile index)
+    ;; Save the index datastore
+    (eieio-persistent-save index)))
 
 (cl-defmethod mrosetta-context-org-process-heading ((context mrosetta-context-org))
   "Process the heading at point by the provided Metarosetta CONTEXT."
@@ -813,7 +894,7 @@
                                             (when (and id-property
                                                        (not (string-empty-p id-property)))
                                               (string-to-number id-property))))
-                         (mlexpression-index (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context)))
+                         (mlexpression-index (mrosetta-context-org-db-mlexpression-collection (mrosetta-context-org-index context)))
                          (mlexpression-index-entry (or (let ((entry (mrosetta-context-org-collection-get mlexpression-index mlexpression-id)))
                                                          (when entry
                                                            (mrosetta-context-org-mlexpression-mldefinition-set entry mldefinition)
@@ -867,12 +948,12 @@
                                (not (and exdata
                                          (let* ((sdata (cdr exdata))
                                                 (connector (mrosetta-context-org-connector context))
-                                                (mlexpression-index-entry (mrosetta-context-org-collection-get (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context))
+                                                (mlexpression-index-entry (mrosetta-context-org-collection-get (mrosetta-context-org-db-mlexpression-collection (mrosetta-context-org-index context))
                                                                                                                mlexpression-id))
                                                 (cparameters (mapcan (lambda (cparameter-pair)
                                                                        `(,(car cparameter-pair) ,(cdr cparameter-pair)))
                                                                      (mrosetta-context-org-mlexpression-cparameters mlexpression-index-entry)))
-                                                (mlexpression-matches (mrosetta-context-org-mlexpression-matches mlexpression-index-entry))
+                                                (mlexpression-matches (mrosetta-context-org-mlexpression-match-collection mlexpression-index-entry))
                                                 (match-id (let ((id-property (org-entry-get (point) "mrosetta-match-id")))
                                                             (when (and id-property
                                                                        (not (string-empty-p id-property)))
@@ -910,13 +991,14 @@
 
 (cl-defmethod mrosetta-context-org-update ((context mrosetta-context-org))
   "Update all tracked org heading entries within CONTEXT."
-  (let ((mlexpression-index (mrosetta-context-org-db-mlexpressions (mrosetta-context-org-index context)))
+  (let ((mlexpression-index (mrosetta-context-org-db-mlexpression-collection (mrosetta-context-org-index context)))
         (mlexpression-cache (mrosetta-context-org-mlexpressions context))
         (connector (mrosetta-context-org-connector context)))
     ;; Update all tracked matches accross all defined Metalanguage expressions
-    (dolist (mlexpression-index-entry (mrosetta-context-org-collection-items mlexpression-index))
-      (let* ((mlexpression-id (mrosetta-context-org-entry-id mlexpression-index-entry))
-             (mlexpression-matches (mrosetta-context-org-mlexpression-matches mlexpression-index-entry))
+    (dolist (mlexpression-index-entry-pair (mrosetta-context-org-collection-items mlexpression-index))
+      (let* ((mlexpression-index-entry (cdr mlexpression-index-entry-pair))
+             (mlexpression-id (mrosetta-context-org-entry-id mlexpression-index-entry))
+             (mlexpression-matches (mrosetta-context-org-mlexpression-match-collection mlexpression-index-entry))
              (cparameters (mapcan (lambda (cparameter-pair)
                                     `(,(car cparameter-pair) ,(cdr cparameter-pair)))
                                   (mrosetta-context-org-mlexpression-cparameters mlexpression-index-entry)))
