@@ -14,8 +14,9 @@
 
 (require 'eieio)
 (require 'eieio-base)
+(require 'url)
+(require 'url-http)
 (require 'org)
-(require 'request)
 
 (defclass mrosetta-keychain ()
   ((lastkey
@@ -336,7 +337,7 @@
 
 (cl-defmethod mrosetta-parse-element ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the element expression into the MLEXPRESSION instance in context. This expression utilizes no ARGS."
-  (setf (slot-value mlexpression 'is-plural) t)
+  (setf (slot-value mlexpression 'is-plural) nil)
   args)
 
 (push '(element . mrosetta-parse-element) mrosetta-mlsyntax)
@@ -556,6 +557,52 @@
   "Using the specified CONNECTOR, receive structured data entries whose KEY equals to VALUE with specified connector-specific CPARAMETERS. Call back the CALLBACK function when done."
   (error "Connector implementation error: Method mrosetta-connector-receive not implemented in `%s'" (symbol-name (eieio-object-class-name connector))))
 
+(defun mrosetta-connector-url-snr (url &rest uargs)
+  "Send the provided :payload object, if provided, as JSON payload to the URL endpoint, while, within UARGS, specifying the connection :header-auth value and :callback function to call upon completion, with the :success status, :status-code and returned :payload object, if any, or :status-message in case of an error."
+  (let ((full-url (concat url
+                          ;; Append the query section if :qparams specified
+                          (when (plist-get uargs :qparams)
+                            (concat "?"
+                                    ;; Map all the provided query parameters along with their corresponding values
+                                    (mapconcat (lambda (parampair)
+                                                 (let ((param (car parampair))
+                                                       (value (cdr parampair)))
+                                                   (concat param "=" value)))
+                                               (plist-get uargs :qparams)
+                                               "&")))))
+        (url-request-method (plist-get uargs :verb))
+        (url-request-extra-headers `(("Authorization" . ,(plist-get uargs :header-auth))
+                                     ("Content-Type" . "application/json")))
+        (url-request-data (when (plist-get uargs :payload)
+                            (json-serialize (plist-get uargs :payload))))
+        (callback (plist-get uargs :callback)))
+    (with-current-buffer (url-retrieve-synchronously full-url)
+      (let (success
+            status-code
+            status-message
+            payload)
+        ;; Start at the beginning of the current buffer
+        (goto-char (point-min))
+        ;; Set the status code
+        (setq status-code (url-http-symbol-value-in-buffer 'url-http-response-status (current-buffer)))
+        ;; Move past header data
+        (goto-char url-http-end-of-headers)
+        ;; Get and parse the payload data
+        (setq payload (json-parse-buffer :object-type 'alist))
+        ;; Parse the status code
+        (if (eq (/ status-code 100) 2)
+            ;; If 2xx signal success
+            (setq success t)
+          ;; Else, set the status message from the payload
+          (setq status-message (cdr (assq 'message payload))))
+        ;; Call back the callback function with the response data
+        (funcall callback
+                 :success success
+                 :status-code status-code
+                 :status-message status-message
+                 :payload payload))
+      (kill-buffer))))
+
 (defclass mrosetta-connector-coda (mrosetta-connector)
   ((token
     :initarg :token
@@ -568,42 +615,33 @@
   `(:doc-id
     :table-id))
 
-(cl-defmethod mrosetta-connector-status-code-handlers ((_connector-class (subclass mrosetta-connector-coda)) callback)
-  "In context of the CONNETOR-CLASS, by using the provided CALLBACK, generate the standard Coda API status code handlers in form of an alist."
-  `((400 . ,(lambda (&rest _) (funcall callback nil :message "Parameters and/or payload invalid!")))
-    (401 . ,(lambda (&rest _) (funcall callback nil :message "API token is invalid or has expired!")))
-    (403 . ,(lambda (&rest _) (funcall callback nil :message "Beyond API token authorization scope!")))
-    (404 . ,(lambda (&rest _) (funcall callback nil :message "Resource could not be located!")))
-    (429 . ,(lambda (&rest _) (funcall callback nil :message "Sent too many requests!")))))
-
 (cl-defmethod mrosetta-connector-send ((connector mrosetta-connector-coda) key sdata callback cparameters)
   "Using the specified Coda CONNECTOR, send the SDATA list of processed textual instances, defined by the KEY property, with specified CPARAMETERS. Specify CALLBACK function for response callback."
   (let ((token (mrosetta-connector-coda-token connector))
         (doc-id (plist-get cparameters :doc-id))
         (table-id (plist-get cparameters :table-id))
-        (payload `(("rows" . [])
-                   ("keyColumns" . ,(vector (symbol-name key))))))
+        (payload `((rows . [])
+                   (keyColumns . ,(vector (symbol-name key))))))
     ;; Process the semantic data into a compatible payload structure, iterating over all provided instances within the semantic data structure
-    (setf (cdr (assoc "rows" payload)) (vconcat (mapcar (lambda (instance)
-                                                          ;; Map all property-value pairs to a payload-compatible format
-                                                          `(("cells" . ,(vconcat (mapcar (lambda (pvpair)
-                                                                                           `(("column" . ,(symbol-name (car pvpair)))
-                                                                                             ("value" . ,(let ((value (cdr pvpair)))
-                                                                                                           (if (listp value)
-                                                                                                               (vconcat value)
-                                                                                                             value)))))
-                                                                                         instance)))))
-                                                        sdata)))
+    (setf (cdr (assq 'rows payload)) (vconcat (mapcar (lambda (instance)
+                                                        ;; Map all property-value pairs to a payload-compatible format
+                                                        `((cells . ,(vconcat (mapcar (lambda (pvpair)
+                                                                                       `((column . ,(symbol-name (car pvpair)))
+                                                                                         (value . ,(let ((value (cdr pvpair)))
+                                                                                                     (if (listp value)
+                                                                                                         (vconcat value)
+                                                                                                       value)))))
+                                                                                     instance)))))
+                                                      sdata)))
     ;; Send the data
-    (request
-      (concat "https://coda.io/apis/v1/docs/" doc-id "/tables/" table-id "/rows")
-      :type "POST"
-      :headers `(("Authorization" . ,(concat "Bearer " token))
-                 ("Content-type" . "application/json"))
-      :data (json-serialize payload)
-      :parser 'json-parse-string
-      :status-code `((202 . ,(lambda (&rest _) (funcall callback t)))
-                     ,@(mrosetta-connector-status-code-handlers (eieio-object-class connector) callback)))))
+    (mrosetta-connector-url-snr (concat "https://coda.io/apis/v1/docs/" doc-id "/tables/" table-id "/rows")
+                                :verb "POST"
+                                :header-auth (concat "Bearer " token)
+                                :payload payload
+                                :callback (lambda (&rest cbargs)
+                                            (let ((success (plist-get cbargs :success))
+                                                  (status-message (plist-get cbargs :status-message)))
+                                              (funcall callback success :message status-message))))))
 
 (cl-defmethod mrosetta-connector-receive ((connector mrosetta-connector-coda) key value callback cparameters)
   "Using the specified Coda CONNECTOR, receive semantic data based on the provided KEY property and corresponding VALUE, with specified CPARAMETERS. Specify CALLBACK function for response callback containing the requested data."
@@ -614,45 +652,52 @@
          (page-token (plist-get cparameters :page-token))
          (sdata (or (plist-get cparameters :sdata) '())))
     ;; Receive the data
-    (request
-      (concat "https://coda.io/apis/v1/docs/" doc-id "/tables/" table-id "/rows")
-      :type "GET"
-      :headers `(("Authorization" . ,(concat "Bearer " token)))
-      :params (if page-token
-                  ;; Fetch the next page of the request in current context
-                  `(("pageToken" . ,page-token))
-                ;; Create a new request based on parameter criteria
-                `(("query" . ,(concat "\"" (symbol-name key) "\""
-                                      ":"
-                                      (when (stringp value) "\"")
-                                      value
-                                      (when (stringp value) "\"")))
-                  ("useColumnNames" . "true")
-                  ("valueFormat" . "simpleWithArrays")))
-      :parser 'json-parse-string
-      :status-code `((200 . ,(lambda (&rest response)
-                               (let* ((data (plist-get response :data))
-                                      (payload-items (gethash "items" data))
-                                      (next-page-token (gethash "nextPageToken" data)))
-                                 ;; Compile the current payload into the sdata object
-                                 (and payload-items
-                                      (setq sdata `(,@sdata ,@(mapcar (lambda (payload-item)
-                                                                        (let ((instance-data '()))
-                                                                          (maphash (lambda (key value)
-                                                                                     (setq instance-data `(,@instance-data
-                                                                                                           (,(intern key) . ,(if (vectorp value) `(,@value) value)))))
-                                                                                   (gethash "values" payload-item))
-                                                                          instance-data))
-                                                                      payload-items))))
-                                 (or (and next-page-token
-                                          ;; Move on to the next page of data
-                                          (mrosetta-connector-receive connector key value callback `(:doc-id ,doc-id
-                                                                                                     :table-id ,table-id
-                                                                                                     :page-token ,next-page-token
-                                                                                                     :sdata ,sdata)))
-                                     ;; No more pages, return the compiled data
-                                     (funcall callback sdata)))))
-                     ,@(mrosetta-connector-status-code-handlers (eieio-object-class connector) callback)))))
+    (mrosetta-connector-url-snr (concat "https://coda.io/apis/v1/docs/" doc-id "/tables/" table-id "/rows")
+                                :verb "GET"
+                                :header-auth (concat "Bearer " token)
+                                :qparams (if page-token
+                                             ;; Fetch the next page of the request in current context
+                                             `(("pageToken" . ,page-token))
+                                           ;; Create a new request based on parameter criteria
+                                           `(("query" . ,(concat "\"" (symbol-name key) "\""
+                                                                 ":"
+                                                                 (when (stringp value) "\"")
+                                                                 value
+                                                                 (when (stringp value) "\"")))
+                                             ("useColumnNames" . "true")
+                                             ("valueFormat" . "simpleWithArrays")))
+                                :callback (lambda (&rest cbargs)
+                                            (let ((success (plist-get cbargs :success))
+                                                  (status-message (plist-get cbargs :status-message))
+                                                  (payload (plist-get cbargs :payload)))
+                                              (or (and success
+                                                       ;; Request successful, process received payload
+                                                       (let ((payload-items (cdr (assq 'items payload)))
+                                                             (next-page-token (cdr (assq 'nextPageToken payload))))
+                                                         ;; Compile the current payload into the sdata object
+                                                         (and payload-items
+                                                              (setq sdata `(,@sdata ,@(mapcar (lambda (payload-item)
+                                                                                                (mapcar (lambda (pvpair)
+                                                                                                          (let ((property (car pvpair))
+                                                                                                                (value (cdr pvpair)))
+                                                                                                            `(,property . ,(if (vectorp value)
+                                                                                                                               `(,@value)
+                                                                                                                             value))))
+                                                                                                        (cdr (assq 'values payload-item))))
+                                                                                              payload-items)))
+                                                              (or (and next-page-token
+                                                                       ;; Move on to the next page of data
+                                                                       (prog1 t
+                                                                         (mrosetta-connector-receive connector key value callback `(:doc-id ,doc-id
+                                                                                                                                    :table-id ,table-id
+                                                                                                                                    :page-token ,next-page-token
+                                                                                                                                    :sdata ,sdata))))
+                                                                  ;; No more pages, return the compiled data
+                                                                  (prog1 t
+                                                                    (funcall callback sdata))))))
+                                                  ;; Something went wrong, return the error message
+                                                  (prog1 t
+                                                    (funcall callback nil :message status-message))))))))
 
 (defun mrosetta-context-org-heading-get ()
   "Get the full org heading at point as plain string, excluding the leading asterisks."
