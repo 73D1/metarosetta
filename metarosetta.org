@@ -2415,23 +2415,40 @@ Start listening for incoming semantic data within current context.
 (cl-defmethod mrosetta-context-org-start-listening ((context mrosetta-context-org) hostname port)
   "Start listening for incoming semantic data at HOSTNAME on PORT within CONTEXT. Note that the host name is for notational purposes only."
   (let ((mlexpression-index (mrosetta-context-org-db-mlexpression-collection (slot-value context 'index)))
+        (am-alive-hooks '())
         (listener (setf (slot-value context 'listener)
                         (mrosetta-connector-http-listener :hostname hostname :port port))))
     ;; Set all endpoints within the index
     (dolist (mlexpression-index-entry-pair (mrosetta-context-org-collection-items mlexpression-index))
       (let* ((mlexpression-id (car mlexpression-index-entry-pair))
              (mlexpression-index-entry (cdr mlexpression-index-entry-pair))
+             (am-alive-hook (mrosetta-context-org-mlexpression-am-alive-hook mlexpression-index-entry))
              (catching-hook (mrosetta-context-org-mlexpression-catching-hook mlexpression-index-entry)))
-        ;; Catch webhook in context
+        ;; Register catcher
         (mrosetta-connector-webhook-catch catching-hook
                                           listener
                                           (lambda (sdata)
                                             ;; Update headings within the context of the Metalanguage expression
                                             (mrosetta-context-org-update-headings context mlexpression-id sdata)
                                             ;; Confirm successful reception of data
-                                            `(:success t)))))
+                                            `(:success t)))
+        ;; Queue am-alive hooks
+        (push `(,mlexpression-id . ,am-alive-hook) am-alive-hooks)))
     ;; Start listener
-    (mrosetta-connector-http-listener-start listener)))
+    (mrosetta-connector-http-listener-start listener)
+    ;; Broadcast alive status
+    (mapc (lambda (hookpair)
+            (let ((mlexpression-id (car hookpair))
+                  (am-alive-hook (cdr hookpair)))
+              (mrosetta-connector-webhook-bite am-alive-hook t
+                                               (lambda (did-succeed &rest cbargs)
+                                                 (if did-succeed
+                                                     (message "Mrosetta broadcasted availability for match updates of Metalanguage expression with id %s!"
+                                                              (number-to-string mlexpression-id))
+                                                   (let ((msg (plist-get cbargs :message)))
+                                                     (message "Mrosetta broadcast of availability error for Metalanguage expression with id %s: %s"
+                                                              (number-to-string mlexpression-id) msg)))))))
+          am-alive-hooks)))
 #+END_SRC
 ***** Stop Context Listener
 Stop listening for incoming semantic data.
@@ -2440,7 +2457,21 @@ Stop listening for incoming semantic data.
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-context-org-stop-listening ((context mrosetta-context-org))
   "Stop listening for incoming semantic data within CONTEXT."
-  (let ((listener (slot-value context 'listener)))
+  (let ((mlexpression-index (mrosetta-context-org-db-mlexpression-collection (slot-value context 'index)))
+        (listener (slot-value context 'listener)))
+    ;; Broadcast alive status
+    (dolist (mlexpression-index-entry-pair (mrosetta-context-org-collection-items mlexpression-index))
+      (let* ((mlexpressoin-id (car mlexpression-index-entry-pair))
+             (mlexpression-index-entry (cdr mlexpression-index-entry-pair))
+             (am-alive-hook (mrosetta-context-org-mlexpression-am-alive-hook mlexpression-index-entry)))
+        (mrosetta-connector-webhook-bite am-alive-hook nil
+                                         (lambda (did-succeed &rest cbargs)
+                                           (if did-succeed
+                                               (message "Mrosetta broadcasted availability termination for match updates of Metalanguage epxression with id %s!"
+                                                        (number-to-string mlexpressoin-id))
+                                             (let ((msg (plist-get cbargs :message)))
+                                               (message "Mrosetta broadcast of availability termination error for Metalanguage expression with id %s: %s"
+                                                        (number-to-string mlexpressoin-id) msg)))))))
     ;; Stop listener
     (mrosetta-connector-http-listener-stop listener)))
 #+END_SRC
