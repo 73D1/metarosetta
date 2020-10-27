@@ -2640,20 +2640,28 @@ An example configuration of Metarosetta within an Emacs configuration file.
 #+BEGIN_SRC emacs-lisp :noweb yes :session mrosetta-config
 <<demo-init>>
 
-<<mrosetta-connector>>
-<<mrosetta-connector-parameters>>
-<<mrosetta-connector-send>>
-<<mrosetta-connector-receive>>
+<<mrosetta-connector-payload-compile>>
+<<mrosetta-connector-payload-decompile>>
 
-<<mrosetta-connector-url-snr>>
+<<mrosetta-connector-http-request>>
 
-<<mrosetta-connector-coda>>
-<<mrosetta-connector-coda-parameters>>
-<<mrosetta-connector-coda-send>>
-<<mrosetta-connector-coda-receive>>
+<<mrosetta-connector-http-listener>>
+<<mrosetta-connector-http-listener-start>>
+<<mrosetta-connector-http-listener-stop>>
+<<mrosetta-connector-http-listener-endpoint-set>>
+
+<<mrosetta-connector-webhook-biting>>
+<<mrosetta-connector-webhook-bite>>
+<<mrosetta-connector-webhook-biting-am-alive>>
+<<mrosetta-connector-webhook-bite-am-alive>>
+
+<<mrosetta-connector-webhook-catching>>
+<<mrosetta-connector-webhook-cathing-url>>
+<<mrosetta-connector-webhook-catch>>
 
 <<mrosetta-context-org-heading-get>>
 <<mrosetta-context-org-heading-set>>
+<<mrosetta-context-org-heading-find>>
 
 <<mrosetta-context-org-collection>>
 <<mrosetta-context-org-collection-set>>
@@ -2681,11 +2689,10 @@ An example configuration of Metarosetta within an Emacs configuration file.
 <<mrosetta-context-org>>
 <<mrosetta-context-org-load>>
 <<mrosetta-context-org-save>>
+<<mrosetta-context-org-start-listening>>
+<<mrosetta-context-org-stop-listening>>
 <<mrosetta-context-org-process>>
-<<mrosetta-context-org-update>>
-<<mrosetta-context-org-sync>>
-<<mrosetta-context-org-sync-start>>
-<<mrosetta-context-org-sync-stop>>
+<<mrosetta-context-org-update-headings>>
 
 "Mrosetta components loaded successfully!"
 #+END_SRC
@@ -2696,19 +2703,10 @@ An example configuration of Metarosetta within an Emacs configuration file.
 ** Init
 Initialize a Metarosetta org context instance with the corresponding connector.
 
-#+NAME: config-token
-#+BEGIN_EXAMPLE
-76d4327a-5bbb-437f-bd15-affc1170d041
-#+END_EXAMPLE
-
 #+NAME: config-init
-#+BEGIN_SRC emacs-lisp :session mrosetta-config :var token=config-token
-(defvar mrosetta-context-org-default (mrosetta-context-org :connector (mrosetta-connector-coda :token token)))
+#+BEGIN_SRC emacs-lisp :session mrosetta-config
+(defvar mrosetta-context-org-default (mrosetta-context-org))
 #+END_SRC
-
-#+RESULTS: config-init
-: mrosetta-context-org-default
-
 ** Load
 Load the context before using it.
 
@@ -2717,10 +2715,6 @@ Load the context before using it.
 (mrosetta-context-org-load mrosetta-context-org-default "~/org/mrosetta-index.db")
 "Context loaded!"
 #+END_SRC
-
-#+RESULTS: config-load
-: Context loaded!
-
 ** Save on Exit
 Save the current context index before quitting Emacs.
 
@@ -2731,9 +2725,6 @@ Save the current context index before quitting Emacs.
 "Hook added!"
 #+END_SRC
 
-#+RESULTS: config-save
-: Hook added!
-
 *** Remove Set Hook
 If needed, remove the hook set above
 
@@ -2743,10 +2734,32 @@ If needed, remove the hook set above
              (lambda () (mrosetta-context-org-save mrosetta-context-org-default)))
 "Hook removed!"
 #+END_SRC
+** Start Listening
+Start the context listener for incoming webhooks.
 
-#+RESULTS: config-save-remove
-: Hook removed!
+#+NAME: config-listener-start
+#+BEGIN_SRC emacs-lisp :session mrosetta-config
+(mrosetta-context-org-start-listening mrosetta-context-org-default
+                                      "lappy.btedeschi.com"
+                                      8080)
+#+END_SRC
+** Stop Listening
+Stop the context listener before quitting Emacs.
 
+#+NAME: config-listener-stop
+#+BEGIN_SRC emacs-lisp :session mrosetta-config
+(add-hook 'kill-emacs-hook
+          (lambda () (mrosetta-context-org-stop-listening mrosetta-context-org-default)))
+#+END_SRC
+
+*** Remove Set Hook
+If needed, remove the hook set above
+
+#+NAME: config-listener-stop-remove
+#+BEGIN_SRC emacs-lisp :session mrosetta-config
+(remove-hook 'kill-emacs-hook
+             (lambda () (mrosetta-context-org-stop-listening mrosetta-context-org-default)))
+#+END_SRC
 ** Process Heading
 A simple keymap definition to trigger Metarosetta on a specific org heading.
 
@@ -2757,24 +2770,6 @@ A simple keymap definition to trigger Metarosetta on a specific org heading.
       :desc "Metarosetta Heading"
       :n "m" (cmd! (mrosetta-context-org-process-heading mrosetta-context-org-default)))
 "Keymap added!"
-#+END_SRC
-
-#+RESULTS: config-process-heading
-: Keymap added!
-
-** Sync
-Start synchronization every 5 minutes.
-
-#+NAME: config-sync-start
-#+BEGIN_SRC emacs-lisp :session mrosetta-config
-(mrosetta-context-org-sync-start mrosetta-context-org-default 5)
-#+END_SRC
-
-Stop synchronization.
-
-#+NAME: config-sync-stop
-#+BEGIN_SRC emacs-lisp :session mrosetta-config
-(mrosetta-context-org-sync-stop mrosetta-context-org-default)
 #+END_SRC
 * Registration
 #+NAME: registration
