@@ -39,6 +39,7 @@ For details and language specification, please refer to the original package doc
 (require 'eieio-base)
 (require 'url)
 (require 'url-http)
+(require 'web-server)
 (require 'org)
 #+END_SRC
 * Helpers
@@ -1592,238 +1593,366 @@ Now, we can pass in an updated property or two. The properties not included will
 #+RESULTS:
 : "BLOCKER task created in backend/api for #backend #frontend!"
 
-* Connectors
-Supported connections through which structured semantic data is sent, in addition to semantic updates being received.
+* Connector
+The connector layer enables processed semantic data to be sent out to a webhook-listening receiver, or, inversely, have incoming semantic data update the original text in context.
 
-** Agnostic Interface
-The general interface used to send/receive structured data in and out of the human textual context.
+** Payload
+*** Compile Payload
+Compile the Lisp object to a compatible form for subsequent JSON serialization.
 
-#+NAME: mrosetta-connector
+More specifically, the entire semantic data structure, by Metarosetta package convention, is composed of nested combinations of either alists, /plain/ lists or end values. Alists denote property-value pairs (where properties are always symbols themselves), while plain lists plural collections of values.
+
+To be compatible with the JSON serializer, all plain lists must be converted to vectors, while alists left untouched.
+
+#+NAME: mrosetta-connector-payload-compile
 #+BEGIN_SRC emacs-lisp :tangle yes
-(defclass mrosetta-connector ()
-  ()
-  "A base class defining the general interface used to send/receive structured data defined by Metarosetta expressions."
-  :abstract t)
+(defun mrosetta-connector-payload-compile (payload)
+  "Compile the provided PAYLOAD Lisp object before serialization."
+  (or (and (listp payload)
+           ;; Alist Item, Alist or Collection
+           (or (and (symbolp (car payload))
+                    ;; Alist Item
+                    `(,(car payload) . ,(mrosetta-connector-payload-compile (cdr payload))))
+               (and (symbolp (caar payload))
+                    ;; Alist
+                    (mapcar (lambda (item)
+                              (mrosetta-connector-payload-compile item))
+                            payload))
+               ;; Collection
+               (vconcat (mapcar (lambda (item)
+                                  (mrosetta-connector-payload-compile item))
+                                payload))))
+      ;; End Value
+      payload))
 #+END_SRC
-*** Expression Parameters
-An interface for the Metarosetta context to get and set connector-specific parameters required for the connector to function.
+*** Decompile Payload
+Decompile the deserialized Lisp object.
 
-The parameters are scoped to a defined metalanguage expression. Through such parameters, it's possible to set things like expression-specific connector endpoints, query parameters, contextual filters and so on.
+After the JSON parser, all vectors must be converted to /plain/ lists.
 
-#+NAME: mrosetta-connector-parameters
+#+NAME: mrosetta-connector-payload-decompile
 #+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-connector-parameters ((connector-class (subclass mrosetta-connector)))
-  "Get the connector-specific expression parameters required for the CONNECTOR-CLASS. Return a list of parameter keywords."
-  (error "Connector implementation error: Method mrosetta-connector-parameters not implemented in `%s'" (symbol-name (eieio-class-name connector-class))))
+(defun mrosetta-connector-payload-decompile (payload)
+  "Decompile the provided PAYLOAD Lisp object after deserialization."
+  (or (and (listp payload)
+           ;; Alist Item or Alist
+           (or (and (symbolp (car payload))
+                    ;; Alist Item
+                    `(,(car payload) . ,(mrosetta-connector-payload-decompile (cdr payload))))
+               (and (symbolp (caar payload))
+                    ;; Alist
+                    (mapcar (lambda (item)
+                              (mrosetta-connector-payload-decompile item))
+                            payload))
+               ;; Unpredicted state
+               (error "Payload decompilation error: Deserialized lists can only be property-value pairs, or alists")))
+      (and (vectorp payload)
+           ;; Collection
+           (mapcar (lambda (item)
+                     (mrosetta-connector-payload-decompile item))
+                   payload))
+      ;; End Value
+      payload))
 #+END_SRC
-*** Send
-Send structured data to an API endpoint.
+** HTTP
+Handling the HTTP layer for both outgoing url requests as well as listening to incoming connections on specified paths.
 
-#+NAME: mrosetta-connector-send
+*** Request
+Create a request towards a specified url with the supplied parameters, headers and payload.
+
+#+NAME: mrosetta-connector-http-request
 #+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-connector-send ((connector mrosetta-connector) _key _sdata _callback _cparameters)
-  "Using the specified CONNECTOR, send the SDATA containing a list of processed text instances with specified connector-specific CPARAMETERS. The KEY defines the property symbol considered as an instance key, wherein the same-id instances are overwritten. Call back the CALLBACK function when done."
-  (error "Connector implementation error: Method mrosetta-connector-send not implemented in `%s'" (symbol-name (eieio-object-class-name connector))))
-#+END_SRC
-*** Receive
-Receive structured data from an API endpoint.
-
-#+NAME: mrosetta-connector-receive
-#+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-connector-receive ((connector mrosetta-connector) _key _value _callback _cparameters)
-  "Using the specified CONNECTOR, receive structured data entries whose KEY equals to VALUE with specified connector-specific CPARAMETERS. Call back the CALLBACK function when done."
-  (error "Connector implementation error: Method mrosetta-connector-receive not implemented in `%s'" (symbol-name (eieio-object-class-name connector))))
-#+END_SRC
-** Implementations
-This section contains all platform-specific connectors implementing the above specified interface for sending and receiving structured semantic data in sync with the human text in context.
-
-*** Connector Helper Functions
-Convenience wrappers around Emac' builtin ~url.el~.
-
-**** Send and Receive JSON Data
-Send the provided Lisp object (if any) as serialized JSON to the provided endpoint. Upon completion, call back the provided callback function along with the status code and payload, if any. In case of an error, call back the callback function with the status code and message.
-
-#+NAME: mrosetta-connector-url-snr
-#+BEGIN_SRC emacs-lisp :tangle yes
-(defun mrosetta-connector-url-snr (url &rest uargs)
-  "Send the provided :payload object, if provided, as JSON payload to the URL endpoint, while, within UARGS, specifying the connection :header-auth value and :url-callback function to call upon completion, with the :success status, :status-code and returned :payload object, if any, or :status-message in case of an error."
+(defun mrosetta-connector-http-request (url &rest url-args)
+  "Send the provided query paramaters set by :qparams within URL-ARGS in alist form, and :payload Lisp object as serialized JSON payload, if respectively provided, to the URL endpoint, specifying the :verb as :GET or :POST, as well as the connection :headers in alist form. Upon completion, call the :callback function with the :success status, :status-code and returned :payload object, if any, or :status-message in case of an error."
   (let ((full-url (concat url
-                          ;; Append the query section if :qparams specified
-                          (when (plist-get uargs :qparams)
+                          ;; Apppend the query section if :qparams specified
+                          (when (plist-get url-args :qparams)
                             (concat "?"
                                     ;; Map all the provided query parameters along with their corresponding values
                                     (mapconcat (lambda (parampair)
                                                  (let ((param (car parampair))
                                                        (value (cdr parampair)))
                                                    (concat param "=" value)))
-                                               (plist-get uargs :qparams)
+                                               (plist-get url-args :qparams)
                                                "&")))))
-        (url-request-method (plist-get uargs :verb))
-        (url-request-extra-headers `(("Authorization" . ,(plist-get uargs :header-auth))
-                                     ("Content-Type" . "application/json")))
-        (url-request-data (when (plist-get uargs :payload)
-                            (json-serialize (plist-get uargs :payload))))
-        (url-callback (plist-get uargs :url-callback)))
-    (message "This is the payload - %s" url-request-data)
-    (with-current-buffer (url-retrieve-synchronously full-url)
-      (let (success
-            status-code
-            status-message
-            payload)
-        ;; Start at the beginning of the current buffer
-        (goto-char (point-min))
-        ;; Set the status code
-        (setq status-code (url-http-symbol-value-in-buffer 'url-http-response-status (current-buffer)))
-        ;; Move past header data
-        (goto-char url-http-end-of-headers)
-        ;; Get and parse the payload data
-        (setq payload (json-parse-buffer :object-type 'alist))
-        ;; Parse the status code
-        (if (eq (/ status-code 100) 2)
-            ;; If 2xx signal success
-            (setq success t)
-          ;; Else, set the status message from the payload
-          (setq status-message (cdr (assq 'message payload))))
-        ;; Call back the url-callback function with the response data
-        (funcall url-callback
-                 :success success
-                 :status-code status-code
-                 :status-message status-message
-                 :payload payload))
-      (kill-buffer))))
+        (url-request-method (substring (symbol-name (plist-get url-args :verb)) 1))
+        (url-request-extra-headers (if (plist-get url-args :payload)
+                                       ;; Payload exists, append appropriate header
+                                       `(("Content-Type" . "application/json") ,@(plist-get url-args :headers))
+                                     (plist-get url-args :headers)))
+        (url-request-data (when (plist-get url-args :payload)
+                            (json-serialize (mrosetta-connector-payload-compile (plist-get url-args :payload)))))
+        (url-callback (plist-get url-args :callback)))
+    ;; Retrieve asynchronously
+    (url-retrieve full-url
+                  (lambda (_status callback-cbarg)
+                    (let (success
+                          status-code
+                          status-message
+                          payload)
+                      ;; Start at the beginning of the buffer
+                      (goto-char (point-min))
+                      ;; Set the status code
+                      (setq status-code (url-http-symbol-value-in-buffer 'url-http-response-status (current-buffer)))
+                      ;; Skip the headers section, delimited by an empty line
+                      (re-search-forward "^$")
+                      ;; Parse the payload section
+                      (setq payload (mrosetta-connector-payload-decompile (json-parse-buffer :object-type 'alist)))
+                      ;; Parse the status code
+                      (if (eq (/ status-code 100) 2)
+                          ;; If 2xx signal success
+                          (setq success t)
+                        ;; Else, set the status message from the payload
+                        (setq status-message (cdr (assq 'message payload))))
+                      ;; Call back the callback function with the response data
+                      (funcall callback-cbarg
+                               :success success
+                               :status-code status-code
+                               :status-message status-message
+                               :payload payload))
+                    ;; Kill the response buffer
+                    (kill-buffer))
+                  `(,url-callback))))
 #+END_SRC
-*** Coda
-Coda is a user-friendly platform-agnostic app platform, where apps take form of /documents/. For more info see their [[https://coda.io/][website]].
+*** Listener
+Create a listener server to listen on specified paths for incoming requests.
 
-This connector enables two-way synchronization between human-readable text and its structured semantics persisted and organized as Coda table entries.
-
-Please note that, at this time, the Coda connector *only* supports non-nested semantic structures, where property values can either be simple values like strings or numbers and lists of simple values.
-
-**** Connector Class
-To interact with Coda, a Coda connector instance is created with a valid API token set by the ~:token~ keyword.
-
-#+NAME: mrosetta-connector-coda
+#+NAME: mrosetta-connector-http-listener
 #+BEGIN_SRC emacs-lisp :tangle yes
-(defclass mrosetta-connector-coda (mrosetta-connector)
-  ((token
-    :initarg :token
+(defclass mrosetta-connector-http-listener ()
+  ((hostname
+    :initarg :hostname
     :type string
-    :documentation "The bearer token used to authenticate against the Coda API."
-    :reader mrosetta-connector-coda-token)))
+    :documentation "The host name of the server."
+    :reader mrosetta-connector-http-listener-hostname)
+   (port
+    :initarg :port
+    :type number
+    :documentation "The port at which the web-server should accept requests."
+    :reader mrosetta-connector-http-listener-port)
+   (procotocl
+    :initarg :protocol
+    :initform "https"
+    :type string
+    :documentation "The protocol accepted for incoming requests. Note that this is only of informational nature, as TLS termination is done outside of Emacs."
+    :reader mrosetta-connector-http-listener-protocol)
+   (server
+    :initform 'nil
+    :type (or null ws-server)
+    :documentation "A ws-server instance containing all instance-registered listeners.")
+   (keychain
+    :initform (mrosetta-keychain)
+    :type mrosetta-keychain
+    :documentation "A keychain to manage assigned endpoint ids.")
+   (endpoints
+    :initform '()
+    :type list
+    :documentation "A list of all instance-registered listeners.")
+   (is-alive
+    :initform 'nil
+    :documentation "The state of the server in context, t if running, nil otherwise."
+    :reader mrosetta-connector-http-listener-is-alive))
+  "An object defining a specific web-server with corresponding handlers at specific paths.")
 #+END_SRC
-**** Expression Parameters
-Return the list of expression-specific parameters the Coda connector needs in order to locate the corresponding table which the matched semantic data is synced to.
 
-Namely, the ~:doc-id~ which sets the targeted Coda document id and the ~:table-id~ which sets the expression-corresponding Coda table id.
+**** Start
+Start the listening server containing all registered listeners.
 
-#+NAME: mrosetta-connector-coda-parameters
+#+NAME: mrosetta-connector-http-listener-start
 #+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-connector-parameters ((_connector-class (subclass mrosetta-connector-coda)))
-  "Return the expression-related connector parameters of the Coda CONNETOR-CLASS."
-  `(:doc-id
-    :table-id))
+(cl-defmethod mrosetta-connector-http-listener-start ((listener mrosetta-connector-http-listener))
+  "Start the LISTENER."
+  (when (not (slot-value listener 'is-alive))
+    (let ((port (slot-value listener 'port))
+          (endpoints (slot-value listener 'endpoints)))
+      ;; Start the server if one or more endpoints registered
+      (when endpoints
+        (setf (slot-value listener 'server)
+              (ws-start (mapcar (lambda (endpointpair)
+                                  (cdr endpointpair))
+                                endpoints)
+                        port))
+        ;; Set and return t as is-alive status
+        (setf (slot-value listener 'is-alive) t)))))
 #+END_SRC
-**** Send Semantic Data
-Send the provided semantic data to a Coda table. Note that the table schema must match the metalanguage expression's output structure, including the property naming. The ~key~ symbol denotes the property considered as the match instance identifier, where previous records with the same id get overwritten with the newly sent ones.
+**** Stop
+Stop the listening server.
 
-As noted above, the connector parameter defined by the ~:doc-id~ keyword sets the targeted Coda document id, while ~:table-id~ the corresponding table id.
-
-In terms of ~callback~, the callback's first argument receives either ~t~ if operation successful, or ~nil~ otherwise. If unsuccessful, an argument defined by the ~:message~ key contains a human-readable message pertaining to the nature of the error in context.
-
-#+NAME: mrosetta-connector-coda-send
+#+NAME: mrosetta-connector-http-listener-stop
 #+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-connector-send ((connector mrosetta-connector-coda) key sdata connector-callback cparameters)
-  "Using the specified Coda CONNECTOR, send the SDATA list of processed textual instances, defined by the KEY property, with specified CPARAMETERS. Specify CONNECTOR-CALLBACK function for response connector callback."
-  (let ((token (mrosetta-connector-coda-token connector))
-        (doc-id (plist-get cparameters :doc-id))
-        (table-id (plist-get cparameters :table-id))
-        (payload `((rows . [])
-                   (keyColumns . ,(vector (symbol-name key))))))
-    ;; Process the semantic data into a compatible payload structure, iterating over all provided instances within the semantic data structure
-    (setf (cdr (assq 'rows payload)) (vconcat (mapcar (lambda (instance)
-                                                        ;; Map all property-value pairs to a payload-compatible format
-                                                        `((cells . ,(vconcat (mapcar (lambda (pvpair)
-                                                                                       `((column . ,(symbol-name (car pvpair)))
-                                                                                         (value . ,(let ((value (cdr pvpair)))
-                                                                                                     (if (listp value)
-                                                                                                         (vconcat value)
-                                                                                                       value)))))
-                                                                                     instance)))))
-                                                      sdata)))
-    ;; Send the data
-    (mrosetta-connector-url-snr (concat "https://coda.io/apis/v1/docs/" doc-id "/tables/" table-id "/rows")
-                                :verb "POST"
-                                :header-auth (concat "Bearer " token)
-                                :payload payload
-                                :url-callback (lambda (&rest cbargs)
-                                                (let ((success (plist-get cbargs :success))
-                                                      (status-message (plist-get cbargs :status-message)))
-                                                  (funcall connector-callback success :message status-message))))))
+(cl-defmethod mrosetta-connector-http-listener-stop ((listener mrosetta-connector-http-listener))
+  "Stop the LISTENER."
+  (when (slot-value listener 'is-alive)
+    ;; Stop the server
+    (ws-stop (slot-value listener 'server))
+    (setf (slot-value listener 'server) nil)
+    ;; Set the is-alive status and return success of stopping
+    (not (setf (slot-value listener 'is-alive) nil))))
 #+END_SRC
-**** Receive Semantic Data
-Receive semantic data from a Coda table based on query parameters.
+**** Set Endpoint
+Set an endpoint to listen on a specified path for incoming requests, and react accordingly.
 
-The query is defined through the ~key~ and ~value~ arguments, along with the standard ~:doc-id~ and ~:table-id~ connector parameters.
-
-In terms of ~callback~, the callback's first argument receives the resulting semantic data in the form of a list of semantic property-value instances, or ~nil~ if the operation was unsuccessful. If so, it receives the ~:message~ defined argument containing the human-readable error message.
-
-#+NAME: mrosetta-connector-coda-receive
+#+NAME: mrosetta-connector-http-listener-endpoint-set
 #+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-connector-receive ((connector mrosetta-connector-coda) key value connector-callback cparameters)
-  "Using the specified Coda CONNECTOR, receive semantic data based on the provided KEY property and corresponding VALUE, with specified CPARAMETERS. Specify CONNECTOR-CALLBACK function for response connector-callback containing the requested data."
-  (let* ((token (mrosetta-connector-coda-token connector))
-         (doc-id (plist-get cparameters :doc-id))
-         (table-id (plist-get cparameters :table-id))
-         ;; Method-internal connector parameters
-         (page-token (plist-get cparameters :page-token))
-         (sdata (or (plist-get cparameters :sdata) '())))
-    ;; Receive the data
-    (mrosetta-connector-url-snr (concat "https://coda.io/apis/v1/docs/" doc-id "/tables/" table-id "/rows")
-                                :verb "GET"
-                                :header-auth (concat "Bearer " token)
-                                :qparams (if page-token
-                                             ;; Fetch the next page of the request in current context
-                                             `(("pageToken" . ,page-token))
-                                           ;; Create a new request based on parameter criteria
-                                           `(("query" . ,(concat "\"" (symbol-name key) "\""
-                                                                 ":"
-                                                                 (when (stringp value) "\"")
-                                                                 value
-                                                                 (when (stringp value) "\"")))
-                                             ("useColumnNames" . "true")
-                                             ("valueFormat" . "simpleWithArrays")))
-                                :url-callback (lambda (&rest cbargs)
-                                                (let ((success (plist-get cbargs :success))
-                                                      (status-message (plist-get cbargs :status-message))
-                                                      (payload (plist-get cbargs :payload)))
-                                                  (or (and success
-                                                           ;; Request successful, process received payload
-                                                           (let ((payload-items (cdr (assq 'items payload)))
-                                                                 (next-page-token (cdr (assq 'nextPageToken payload))))
-                                                             ;; Compile the current payload into the sdata object
-                                                             (and payload-items
-                                                                  (setq sdata `(,@sdata ,@(mapcar (lambda (payload-item)
-                                                                                                    (mapcar (lambda (pvpair)
-                                                                                                              (let ((property (car pvpair))
-                                                                                                                    (value (cdr pvpair)))
-                                                                                                                `(,property . ,(if (vectorp value)
-                                                                                                                                   `(,@value)
-                                                                                                                                 value))))
-                                                                                                            (cdr (assq 'values payload-item))))
-                                                                                                  payload-items)))
-                                                                  (or (and next-page-token
-                                                                           ;; Move on to the next page of data
-                                                                           (prog1 t
-                                                                             (mrosetta-connector-receive connector key value connector-callback `(:doc-id ,doc-id
-                                                                                                                                                  :table-id ,table-id
-                                                                                                                                                  :page-token ,next-page-token
-                                                                                                                                                  :sdata ,sdata))))
-                                                                      ;; No more pages, return the compiled data
-                                                                      (prog1 t
-                                                                        (funcall connector-callback sdata))))))
-                                                      ;; Something went wrong, return the error message
-                                                      (prog1 t
-                                                        (funcall connector-callback nil :message status-message))))))))
+(cl-defmethod mrosetta-connector-http-listener-endpoint-set ((listener mrosetta-connector-http-listener) path &rest endpoint-args)
+  "Set an endpoint to the LISTENER on the provided PATH, for the provided :verb within the ENDPOINT-ARGS. If :id provided, update an existing entpoint. Upon a received request, call back the :callback function with the request query parameters set by :qparams in alist form, and the :payload Lisp object parsed from the incoming JSON payload. Headers are passed in alist form and set by :headers. The callback function should return a response-defining property list containing a :status-code, :headers if any, and :payload if needed or :status-message if an error occurred. Return the created endpoint's id."
+  (let ((keychain (slot-value listener 'keychain))
+        (endpoint-id (plist-get endpoint-args :id))
+        (verb (plist-get endpoint-args :verb))
+        (listener-callback (plist-get endpoint-args :callback)))
+    (if endpoint-id
+        ;; Clear the existing endpoint
+        (setf (slot-value listener 'endpoints)
+              (assq-delete-all endpoint-id (slot-value listener 'endpoints)))
+      ;; Generate a new endpoint id
+      (setq endpoint-id (mrosetta-keychain-generate-key keychain)))
+    ;; Create and save the endpoint
+    (push `(,endpoint-id . ((,verb . ,path) . ,(lambda (request)
+                                                 (let ((rprocess (ws-process request))
+                                                       (rheaders (mapcar (lambda (html-headerpair)
+                                                                           (let ((headerkey (car html-headerpair))
+                                                                                 (headervalue (cdr html-headerpair)))
+                                                                             `(,(capitalize (substring (symbol-name headerkey) 1)) . ,headervalue)))
+                                                                         (cl-remove-if-not (lambda (headerpair)
+                                                                                             (symbolp (car headerpair)))
+                                                                                           (ws-headers request))))
+                                                       (rparams (cl-remove-if-not (lambda (headerpair)
+                                                                                    (stringp (car headerpair)))
+                                                                                  (ws-headers request)))
+                                                       (rbody (mrosetta-connector-payload-decompile (json-parse-string (ws-body request)
+                                                                                                                       :object-type 'alist)))
+                                                       (response '()))
+                                                   ;; Call back the callback function with set arguments
+                                                   (setq response (funcall listener-callback
+                                                                           :headers rheaders
+                                                                           :qparams rparams
+                                                                           :payload rbody))
+                                                   ;; Compile and write response
+                                                   (let ((res-status-code (plist-get response :status-code))
+                                                         (res-status-message (plist-get response :status-message))
+                                                         (res-headers (plist-get response :headers))
+                                                         (res-payload (plist-get response :payload)))
+                                                     ;; If status message exists, compile it into a payload
+                                                     (when res-status-message
+                                                       (setq res-payload `(message . ,res-status-message)))
+                                                     ;; If payload exists, append appropriate header
+                                                     (when res-payload
+                                                       (setq res-headers `(("Content-Type" . "application/json") . ,@res-headers)))
+                                                     ;; Set response status code and headers
+                                                     (apply #'ws-response-header rprocess res-status-code res-headers)
+                                                     ;; Send the response
+                                                     (process-send-string rprocess
+                                                                          (json-serialize (mrosetta-connector-payload-compile res-payload))))))))
+          (slot-value listener 'endpoints))
+    ;; Return the set endpoint id
+    endpoint-id))
+#+END_SRC
+** Webhooks
+Encapsulating all the package-standard webhook operations.
+
+*** Biting Webhook
+An outgoing webhook defined by a remote url on which to call and send the extracted semantic data of a given match.
+
+#+NAME: mrosetta-connector-webhook-biting
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defclass mrosetta-connector-webhook-biting ()
+  ((url
+    :initarg :url
+    :type string
+    :documentation "The endpoint url of the encompassing webhook instance."
+    :reader mrosetta-connector-webhook-biting-url
+    :writer mrosetta-connector-webhook-biting-url-set))
+  "An outgoing, callable, webhook object to handle sending extracted semantic data of a given match.")
+#+END_SRC
+
+**** Bite
+Call on the webhook object with the provided semantic data.
+
+#+NAME: mrosetta-connector-webhook-bite
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-connector-webhook-bite ((webhook mrosetta-connector-webhook-biting) sdata bite-callback)
+  "Call on the WEBHOOK with the provided SDATA of a given Metalanguage expression match. Upon completion call back the BITE-CALLBACK with a success status of either t or nil, and an optional :message if unsuccessful."
+  (let ((bite-url (slot-value webhook 'url)))
+    ;; Create the HTTP request and register callback
+    (mrosetta-connector-http-request bite-url
+                                     :verb :POST
+                                     :payload sdata
+                                     :callback (lambda (&rest cbargs)
+                                                 (let ((success (plist-get cbargs :success))
+                                                       (msg (plist-get cbargs :status-message)))
+                                                   (funcall bite-callback success :message msg))))))
+#+END_SRC
+*** Biting /Am Alive/ Webhook
+A specialized type of biting webhook to notify /biters/ of this server's catching webhooks of its status.
+
+#+NAME: mrosetta-connector-webhook-biting-am-alive
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defclass mrosetta-connector-webhook-biting-am-alive (mrosetta-connector-webhook-biting)
+  ()
+  "A subclasss of the biting webhook specialized for notifying remote biters of this server's alive status.")
+#+END_SRC
+
+**** Bite
+Call on the webhook with the alive status.
+
+#+NAME: mrosetta-connector-webhook-bite-am-alive
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-connector-webhook-bite ((webhook mrosetta-connector-webhook-biting-am-alive) status bite-callback)
+  "Call on the WEBHOOK to notify of the alive STATUS of t or nil. Upon completion, call back the BITE-CALLBACK with a success status of either t or nil, and an optional :message if unsuccessful."
+  (cl-call-next-method webhook
+                       `(am-alive . ,(if status "yes" "no"))
+                       bite-callback))
+#+END_SRC
+*** Catching Webhook
+An incoming webhook defined by a relative path which to listen on for semantic data updates.
+
+#+NAME: mrosetta-connector-webhook-catching
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defclass mrosetta-connector-webhook-catching ()
+  ((path
+    :initarg :path
+    :type string
+    :documentation "The relative path which to listen on for the encompassing webhook catches."
+    :reader mrosetta-connector-webhook-catching-path
+    :writer mrosetta-connector-webhook-catching-path-set)
+   (id
+    :initform 'nil
+    :type (or null number)
+    :documentation "The listener endpoint id assigned to the webhook in context."))
+  "An incoming webhook object to handle receiving semantic data updates for a given match.")
+#+END_SRC
+
+**** Get Full Endpoint URL
+Return the webhook's full endpoint url.
+
+#+NAME: mrosetta-connector-webhook-cathing-url
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-connector-webhook-catching-url ((webhook mrosetta-connector-webhook-catching) listener)
+  "Return the full endpoint URL of the WEBHOOK in context, within the provided LISTENER."
+  (concat (mrosetta-connector-http-listener-protocol listener) "://"
+          (mrosetta-connector-http-listener-hostname listener)
+          "/" (slot-value webhook 'path)))
+#+END_SRC
+**** Catch
+Register a catcher callback for when the encompassing hook is bitten on the other end.
+
+#+NAME: mrosetta-connector-webhook-catch
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-connector-webhook-catch ((webhook mrosetta-connector-webhook-catching) listener catch-callback)
+  "Register a CATCH-CALLBACK for the WEBHOOK in context with the provided LISTENER. When hook caught, call back the callback function with a list of updated semantic data objects corresponding to tracked Metalanguage expression match instances. The callback should return :success of t if semantic data valid and update successful, or nil if not followed by an optional :message to the sender."
+  (let ((catch-path (slot-value webhook 'path)))
+    ;; Set the corresponding endpoint on the listener
+    (setf (slot-value webhook 'id)
+          (mrosetta-connector-http-listener-endpoint-set listener catch-path
+                                                         :verb :POST
+                                                         :id (slot-value webhook 'id)
+                                                         :callback (lambda (&rest cbargs)
+                                                                     (let* ((sdata (plist-get cbargs :payload))
+                                                                            (res-args (funcall catch-callback sdata))
+                                                                            (res-success (plist-get res-args :success))
+                                                                            (res-message (plist-get res-args :message)))
+                                                                       `(:status-code ,(if res-success 200 400)
+                                                                         :status-message ,res-message)))))))
 #+END_SRC
 * Contexts
 Compatible environments in which metalanguage expressions can be defined and input text natively processed.
@@ -1866,6 +1995,17 @@ Set the full text of the heading, preserving the leading asterisks.
   (delete-region (point) (line-end-position))
   ;; Insert the new content at point
   (insert heading-text))
+#+END_SRC
+**** Find Heading
+Find a specific org heading, given its identifying property.
+
+#+NAME: mrosetta-context-org-heading-find
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defun mrosetta-context-org-heading-find (org-file property-name property-value heading-callback)
+  "Find a specific org heading within ORG-FILE, matched by PROPERTY-VALUE of PROPERTY-NAME. If found, call back the HEADING-CALLBACK with point at the beginning of the heading line."
+  (org-map-entries heading-callback
+                   (concat "+" property-name "=" "\"" property-value "\"")
+                   `(,org-file)))
 #+END_SRC
 *** Match Index
 In order to keep track of all the matched headings across all defined metalanguage expressions agnostic of the org file where the definitions (or matches) are written, an index structure serves as a singular source of truth.
@@ -1958,13 +2098,39 @@ Naturally, updating this org entry within its original context automatically upd
     :documentation "The metalanguage definition referring to the org entry in context."
     :reader mrosetta-context-org-mlexpression-mldefinition
     :writer mrosetta-context-org-mlexpression-mldefinition-set)
-   (cparameters
-    :initarg :cparameters
-    :initform '()
-    :type list
-    :documentation "The list of connector-specific parameters in form of an alist containing parameter-value pairs."
-    :reader mrosetta-context-org-mlexpression-cparameters
-    :writer mrosetta-context-org-mlexpression-cparameters-set)
+   (biting-hook
+    :initform 'nil
+    :type (or null mrosetta-connector-webhook-biting)
+    :documentation "The outgoing webhook to bite when sending out extracted structured semantic data."
+    :reader mrosetta-context-org-mlexpression-biting-hook
+    :writer mrosetta-context-org-mlexpression-biting-hook-set)
+   (biting-hook-compilation
+    :initarg :biting-hook-compilation
+    :initform 'nil
+    :type (or null string)
+    :documentation "The compiled value to persist which defines the biting webhook object in context.")
+   (am-alive-hook
+    :initform 'nil
+    :type (or null mrosetta-connector-webhook-biting-am-alive)
+    :documentation "A dedicated outgoing webhook to notify the biting end of the incoming hook of this server's alive status. No need to bite on hooks when the catcher is down."
+    :reader mrosetta-context-org-mlexpression-am-alive-hook
+    :writer mrosetta-context-org-mlexpression-am-alive-hook-set)
+   (am-alive-hook-compilation
+    :initarg :am-alive-hook-compilation
+    :initform 'nil
+    :type (or null string)
+    :documentation "The compiled value to persist which defines the am alive webhook object in context.")
+   (catching-hook
+    :initform 'nil
+    :type (or null mrosetta-connector-webhook-catching)
+    :documentation "The incoming webhook to catch when receiving semantic data to update tracked matches with."
+    :reader mrosetta-context-org-mlexpression-catching-hook
+    :writer mrosetta-context-org-mlexpression-catching-hook-set)
+   (catching-hook-compilation
+    :initarg :catching-hook-compilation
+    :initform 'nil
+    :type (or null string)
+    :documentation "The compiled value to persist which defines the catching webhook object in context.")
    (match-collection
     :initarg :match-collection
     :initform (mrosetta-context-org-collection :item-class 'mrosetta-context-org-match)
@@ -2065,6 +2231,20 @@ Compile the metalanguage expression org context index entry.
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-context-org-compile ((mlexpression-entry mrosetta-context-org-mlexpression))
   "Compile the MLEXPRESSION-ENTRY for serialization to disk."
+  ;; Compile registered webhooks
+  (setf (slot-value mlexpression-entry 'biting-hook-compilation)
+        (let ((hook (slot-value mlexpression-entry 'biting-hook)))
+          (when hook
+            (mrosetta-connector-webhook-biting-url hook))))
+  (setf (slot-value mlexpression-entry 'am-alive-hook-compilation)
+        (let ((hook (slot-value mlexpression-entry 'am-alive-hook)))
+          (when hook
+            (mrosetta-connector-webhook-biting-url hook))))
+  (setf (slot-value mlexpression-entry 'catching-hook-compilation)
+        (let ((hook (slot-value mlexpression-entry 'catching-hook)))
+          (when hook
+            (mrosetta-connector-webhook-catching-path hook))))
+  ;; Compile the contained match collection
   (setf (slot-value mlexpression-entry 'match-compilation)
         (mrosetta-context-org-compile (slot-value mlexpression-entry 'match-collection)))
   (cl-call-next-method mlexpression-entry))
@@ -2122,9 +2302,26 @@ Decompile the metalanguage expression org context index entry.
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-context-org-decompile ((mlexpression-entry mrosetta-context-org-mlexpression) &optional _compilation)
   "Decompile the contents of the MLEXPRESSION-ENTRY from a compilation slot within, not the provided COMPILATION argument."
+  ;; Decompile registered webhooks, if any
+  (setf (slot-value mlexpression-entry 'biting-hook)
+        (let ((hook-compilation (slot-value mlexpression-entry 'biting-hook-compilation)))
+          (when hook-compilation
+            (mrosetta-connector-webhook-biting :url hook-compilation))))
+  (setf (slot-value mlexpression-entry 'am-alive-hook)
+        (let ((hook-compilation (slot-value mlexpression-entry 'am-alive-hook-compilation)))
+          (when hook-compilation
+            (mrosetta-connector-webhook-biting-am-alive :url hook-compilation))))
+  (setf (slot-value mlexpression-entry 'catching-hook)
+        (let ((hook-compilation (slot-value mlexpression-entry 'catching-hook-compilation)))
+          (when hook-compilation
+            (mrosetta-connector-webhook-catching :path hook-compilation))))
+  ;; Decompile the contained match collection
   (mrosetta-context-org-decompile (slot-value mlexpression-entry 'match-collection)
                                   (slot-value mlexpression-entry 'match-compilation))
-  ;; Clear the compiled list after decompilation
+  ;; Clear the compiled elements after decompilation
+  (setf (slot-value mlexpression-entry 'biting-hook-compilation) nil)
+  (setf (slot-value mlexpression-entry 'am-alive-hook-compilation) nil)
+  (setf (slot-value mlexpression-entry 'catching-hook-compilation) '())
   (setf (slot-value mlexpression-entry 'match-compilation) '())
   (cl-call-next-method mlexpression-entry))
 #+END_SRC
@@ -2147,12 +2344,7 @@ The object handling all Metarosetta-related operations within the org context.
 #+NAME: mrosetta-context-org
 #+BEGIN_SRC emacs-lisp :tangle yes
 (defclass mrosetta-context-org ()
-  ((index-file
-    :initform 'nil
-    :type (or null string)
-    :documentation "The file to which the Metarosetta context will persist all current data from the corresponding index datastore."
-    :reader mrosetta-context-org-index-file)
-   (index
+  ((index
     :initform 'nil
     :type (or null mrosetta-context-org-db)
     :documentation "The active datastore of the current Metarosetta context, containing all defined metalagnuage definitions with their respectively tracked matches."
@@ -2162,52 +2354,46 @@ The object handling all Metarosetta-related operations within the org context.
     :type list
     :documentation "The current session's cache containing all compiled metalanguage expressions active in current context."
     :reader mrosetta-context-org-mlexpressions)
-   (sync-interval
+   (listener
     :initform 'nil
-    :type (or null number)
-    :documentation "The synchronization interval for the current context. If non-nil, specifies the number of seconds between synchronization requests using the provided connector instance."
-    :reader mrosetta-context-org-sync-interval)
-   (connector
-    :initarg :connector
-    :type mrosetta-connector
-    :documentation "The connector instance to use within the current context"
-    :reader mrosetta-context-org-connector))
+    :type (or null mrosetta-connector-http-listener)
+    :documentation "The encompassing context's web-server instance listening on tracked metalanguage expressions' incoming semantic data webhooks."
+    :reader mrosetta-context-org-listener))
   "The Metarosetta org context object. Handles all Metarosetta-related operations within the org context.")
 #+END_SRC
 
-**** Load Context
+**** Context Persistence
+Persist the context index between Emacs sessions.
+
+***** Load Context
 Load the context index from previous Emacs sessions.
 
 #+NAME: mrosetta-context-org-load
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-context-org-load ((context mrosetta-context-org) index-file)
-  "If not already loaded or loaded with something else, (re)load the index datastore from INDEX-FILE, or create a new one if none exists, and compile all indexed Metalanguage expressions within the CONTEXT."
-  (when (or (not (slot-value context 'index-file))
-            (not (string-equal (slot-value context 'index-file)
-                               index-file)))
-    (setf (slot-value context 'index-file) index-file)
-    ;; Load the index datastore
-    (let ((index (setf (slot-value context 'index) (or (when (file-exists-p index-file)
-                                                         (eieio-persistent-read index-file 'mrosetta-context-org-db))
-                                                       (mrosetta-context-org-db :file index-file)))))
-      ;; Decompile index entries
-      (mrosetta-context-org-decompile index)
-      ;; Initialize the registered Metalanguage expression instances
-      (setf (slot-value context 'mlexpressions)
-            (mapcar (lambda (org-mlexpression-pair)
-                      (let* ((org-mlexpression-id (car org-mlexpression-pair))
-                             (org-mlexpression-entry (cdr org-mlexpression-pair))
-                             (mlexpression (mrosetta-mlexpression :mldefinition (mrosetta-context-org-mlexpression-mldefinition org-mlexpression-entry))))
-                        ;; Parse and compile the metalanguage expression
-                        (mrosetta-parse mlexpression)
-                        (mrosetta-compile mlexpression)
-                        ;; Return the metalanguage expression pair
-                        `(,org-mlexpression-id . ,mlexpression)))
-                    (mrosetta-context-org-collection-items (mrosetta-context-org-db-mlexpression-collection index))))))
+  "Load the index datastore from INDEX-FILE, or create a new one if none exists, and compile all indexed Metalanguage expressions within the CONTEXT."
+  ;; Load the index datastore
+  (let ((index (setf (slot-value context 'index) (or (when (file-exists-p index-file)
+                                                       (eieio-persistent-read index-file 'mrosetta-context-org-db))
+                                                     (mrosetta-context-org-db :file index-file)))))
+    ;; Decompile index entries
+    (mrosetta-context-org-decompile index)
+    ;; Initialize the registered Metalanguage expression instances
+    (setf (slot-value context 'mlexpressions)
+          (mapcar (lambda (org-mlexpression-pair)
+                    (let* ((org-mlexpression-id (car org-mlexpression-pair))
+                           (org-mlexpression-entry (cdr org-mlexpression-pair))
+                           (mlexpression (mrosetta-mlexpression :mldefinition (mrosetta-context-org-mlexpression-mldefinition org-mlexpression-entry))))
+                      ;; Parse and compile the metalanguage expression
+                      (mrosetta-parse mlexpression)
+                      (mrosetta-compile mlexpression)
+                      ;; Return the metalanguage expression pair
+                      `(,org-mlexpression-id . ,mlexpression)))
+                  (mrosetta-context-org-collection-items (mrosetta-context-org-db-mlexpression-collection index)))))
   ;; Just return the loaded context
   context)
 #+END_SRC
-**** Save Context
+***** Save Context
 Persist context index after quitting Emacs.
 
 #+NAME: mrosetta-context-org-save
@@ -2219,6 +2405,44 @@ Persist context index after quitting Emacs.
     (mrosetta-context-org-compile index)
     ;; Save the index datastore
     (eieio-persistent-save index)))
+#+END_SRC
+**** Context Listener
+***** Start Context Listener
+Start listening for incoming semantic data within current context.
+
+#+NAME: mrosetta-context-org-start-listening
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-context-org-start-listening ((context mrosetta-context-org) hostname port)
+  "Start listening for incoming semantic data at HOSTNAME on PORT within CONTEXT. Note that the host name is for notational purposes only."
+  (let ((mlexpression-index (mrosetta-context-org-db-mlexpression-collection (slot-value context 'index)))
+        (listener (setf (slot-value context 'listener)
+                        (mrosetta-connector-http-listener :hostname hostname :port port))))
+    ;; Set all endpoints within the index
+    (dolist (mlexpression-index-entry-pair (mrosetta-context-org-collection-items mlexpression-index))
+      (let* ((mlexpression-id (car mlexpression-index-entry-pair))
+             (mlexpression-index-entry (cdr mlexpression-index-entry-pair))
+             (catching-hook (mrosetta-context-org-mlexpression-catching-hook mlexpression-index-entry)))
+        ;; Catch webhook in context
+        (mrosetta-connector-webhook-catch catching-hook
+                                          listener
+                                          (lambda (sdata)
+                                            ;; Update headings within the context of the Metalanguage expression
+                                            (mrosetta-context-org-update-headings context mlexpression-id sdata)
+                                            ;; Confirm successful reception of data
+                                            `(:success t)))))
+    ;; Start listener
+    (mrosetta-connector-http-listener-start listener)))
+#+END_SRC
+***** Stop Context Listener
+Stop listening for incoming semantic data.
+
+#+NAME: mrosetta-context-org-stop-listening
+#+BEGIN_SRC emacs-lisp :tangle yes
+(cl-defmethod mrosetta-context-org-stop-listening ((context mrosetta-context-org))
+  "Stop listening for incoming semantic data within CONTEXT."
+  (let ((listener (slot-value context 'listener)))
+    ;; Stop listener
+    (mrosetta-connector-http-listener-stop listener)))
 #+END_SRC
 **** Handler Functions
 This section covers the operational functionality of the org context.
@@ -2240,6 +2464,18 @@ Process the org heading at point.
                                             (when (and id-property
                                                        (not (string-empty-p id-property)))
                                               (string-to-number id-property))))
+                         (biting-hook-url (let ((hook-url (org-entry-get (point) "mrosetta-mlexpression-bite-url")))
+                                            (when (and hook-url
+                                                       (not (string-empty-p hook-url)))
+                                              hook-url)))
+                         (am-alive-hook-url (let ((hook-url (org-entry-get (point) "mrosetta-mlexpression-am-alive-url")))
+                                              (when (and hook-url
+                                                         (not (string-empty-p hook-url)))
+                                                hook-url)))
+                         (catching-hook-url (let ((hook-url (org-entry-get (point) "mrosetta-mlexpression-catch-url")))
+                                              (when (and hook-url
+                                                         (not (string-empty-p hook-url)))
+                                                hook-url)))
                          (mlexpression-index (mrosetta-context-org-db-mlexpression-collection (mrosetta-context-org-index context)))
                          (mlexpression-index-entry (or (let ((entry (mrosetta-context-org-collection-get mlexpression-index mlexpression-id)))
                                                          (when entry
@@ -2248,20 +2484,56 @@ Process the org heading at point.
                                                        (mrosetta-context-org-mlexpression :org-file (buffer-file-name)
                                                                                           :mldefinition mldefinition)))
                          (mlexpression (mrosetta-mlexpression :mldefinition mldefinition))
-                         (connector (mrosetta-context-org-connector context))
-                         (cparameters (mrosetta-connector-parameters (eieio-object-class connector))))
+                         (listener (mrosetta-context-org-listener context)))
                     (prog1 t ;; Regardless of the processing result, the match itself is valid and should return as such
-                      ;; Fetch connector-specific parameters from org-entry and update the object
-                      (mrosetta-context-org-mlexpression-cparameters-set mlexpression-index-entry
-                                                                         (mapcar (lambda (cparameter)
-                                                                                   `(,cparameter . ,(org-entry-get (point)
-                                                                                                                   (concat "mrosetta-mlexpression-connector-"
-                                                                                                                           ;; Convert keyword symbol to simple string
-                                                                                                                           (substring (symbol-name cparameter) 1)))))
-                                                                                 cparameters))
                       ;; Index the entry
                       (setq mlexpression-index-entry (mrosetta-context-org-collection-set mlexpression-index mlexpression-index-entry))
                       (setq mlexpression-id (mrosetta-context-org-entry-id mlexpression-index-entry))
+                      ;; Set weebhooks within the index entry, if any
+                      ;; Set remote biting hook URL
+                      (when biting-hook-url
+                        (let ((hook (mrosetta-context-org-mlexpression-biting-hook mlexpression-index-entry)))
+                          (if hook
+                              (mrosetta-connector-webhook-biting-url-set hook biting-hook-url)
+                            (mrosetta-context-org-mlexpression-biting-hook-set mlexpression-index-entry
+                                                                               (mrosetta-connector-webhook-biting :url biting-hook-url)))))
+                      ;; Set remote am-alive hook URL
+                      (when am-alive-hook-url
+                        (let ((hook (mrosetta-context-org-mlexpression-am-alive-hook mlexpression-index-entry)))
+                          (if hook
+                              (mrosetta-connector-webhook-biting-url-set hook biting-hook-url)
+                            (mrosetta-context-org-mlexpression-am-alive-hook-set mlexpression-index-entry
+                                                                                 (mrosetta-connector-webhook-biting-am-alive :url am-alive-hook-url)))))
+                      ;; Parse the local catching hook path or generate a new one, and setup the webhook accordingly
+                      (let ((catching-hook-path (or (and catching-hook-url
+                                                         (save-match-data
+                                                           (and (string-match "http\\(?:s\\)?://.+/\\(.+\\)" catching-hook-url)
+                                                                (match-string 1 catching-hook-url))))
+                                                    (mapconcat (lambda (char)
+                                                                 (char-to-string (+ char
+                                                                                    (random (1+ (- ?z char))))))
+                                                               (make-list 17 ?a)
+                                                               "")))
+                            (hook (mrosetta-context-org-mlexpression-catching-hook mlexpression-index-entry)))
+                        (if hook
+                            (mrosetta-connector-webhook-catching-path-set hook catching-hook-path)
+                          (setq hook (mrosetta-connector-webhook-catching :path catching-hook-path))
+                          (mrosetta-context-org-mlexpression-catching-hook-set mlexpression-index-entry hook))
+                        ;; Stop the listener
+                        (mrosetta-connector-http-listener-stop listener)
+                        ;; Register the webhook
+                        (mrosetta-connector-webhook-catch hook
+                                                          listener
+                                                          (lambda (sdata)
+                                                            ;; Update headings within the context of the Metalanguage expression
+                                                            (mrosetta-context-org-update-headings context mlexpression-id sdata)
+                                                            ;; Confirm successful reception of data
+                                                            ;; (Parse info not included within the response for simplicity's sake)
+                                                            `(:success t)))
+                        ;; Start the listener
+                        (mrosetta-connector-http-listener-start listener)
+                        ;; Update the webhook url
+                        (setq catching-hook-url (mrosetta-connector-webhook-catching-url hook listener)))
                       ;; Parse and compile the Metalanguage expression
                       (mrosetta-parse mlexpression)
                       (mrosetta-compile mlexpression)
@@ -2271,17 +2543,13 @@ Process the org heading at point.
                       ;; Populate the org entry istelf with Metarosetta properties
                       ;; Expression ID
                       (org-entry-put (point) "mrosetta-mlexpression-id" (number-to-string mlexpression-id))
-                      ;; Connector-specific parameters
-                      (dolist (cparameter-pair (mrosetta-context-org-mlexpression-cparameters mlexpression-index-entry))
-                        (let ((key (car cparameter-pair))
-                              (value (cdr cparameter-pair)))
-                          (org-entry-put (point)
-                                         (concat "mrosetta-mlexpression-connector-"
-                                                 (substring (symbol-name key) 1))
-                                         (or value ""))))
+                      ;; Webhooks
+                      (org-entry-put (point) "mrosetta-mlexpression-bite-url" biting-hook-url)
+                      (org-entry-put (point) "mrosetta-mlexpression-am-alive-url" am-alive-hook-url)
+                      (org-entry-put (point) "mrosetta-mlexpression-catch-url" catching-hook-url)
                       ;; Notify the user
                       (message "Mrosetta Metalanguage expression processed successfully!"))))
-             (let* ((did-match nil)
+             (let* (did-match
                     (mlexpression-cache (mrosetta-context-org-mlexpressions context))
                     (mlexpression-ids (mapcar (lambda (mlexpression-pair) (car mlexpression-pair))
                                               mlexpression-cache)))
@@ -2289,17 +2557,13 @@ Process the org heading at point.
                (while (let ((mlexpression-id (pop mlexpression-ids)))
                         (and mlexpression-id
                              (let* ((mlexpression (cdr (assq mlexpression-id mlexpression-cache)))
-                                    (exdata (mrosetta-process mlexpression :text heading-text)))
-                               ;; If matched, sync through connector in context and stop iterating
+                                    (sdata (mrosetta-process mlexpression :text heading-text)))
+                               ;; If matched, bite webhook in context and stop iterating
                                ;; If not, continue to the next possible Metalanguage expression match
-                               (not (and exdata
-                                         (let* ((sdata (cdr exdata))
-                                                (connector (mrosetta-context-org-connector context))
-                                                (mlexpression-index-entry (mrosetta-context-org-collection-get (mrosetta-context-org-db-mlexpression-collection (mrosetta-context-org-index context))
+                               (not (and sdata
+                                         (let* ((mlexpression-index-entry (mrosetta-context-org-collection-get (mrosetta-context-org-db-mlexpression-collection (mrosetta-context-org-index context))
                                                                                                                mlexpression-id))
-                                                (cparameters (mapcan (lambda (cparameter-pair)
-                                                                       `(,(car cparameter-pair) ,(cdr cparameter-pair)))
-                                                                     (mrosetta-context-org-mlexpression-cparameters mlexpression-index-entry)))
+                                                (biting-hook (mrosetta-context-org-mlexpression-biting-hook mlexpression-index-entry))
                                                 (mlexpression-match-index (mrosetta-context-org-mlexpression-match-collection mlexpression-index-entry))
                                                 (match-id (let ((id-property (org-entry-get (point) "mrosetta-match-id")))
                                                             (when (and id-property
@@ -2308,30 +2572,22 @@ Process the org heading at point.
                                                 (match-index-entry (or (mrosetta-context-org-collection-get mlexpression-match-index match-id)
                                                                        (mrosetta-context-org-match :org-file (buffer-file-name))))
                                                 (match-sync-id (mrosetta-context-org-match-sync-update match-index-entry)))
-                                           (prog1 t ;; Regardless if the sync actually succeeded, the match itself is valid and should return as such
+                                           (prog1 t ;; Regardless if the bite actually succeeded, the match itself is valid and should return as such
                                              ;; Add index entry, if new
                                              (setq match-index-entry (mrosetta-context-org-collection-set mlexpression-match-index match-index-entry))
                                              (setq match-id (mrosetta-context-org-entry-id match-index-entry))
                                              ;; Add sync metadata
-                                             (setq sdata `((Org_ID . ,match-id)
-                                                           (Org_Sync . "yes")
-                                                           (Org_Did_Sync . "yes")
-                                                           (Org_Sync_ID . ,match-sync-id)
+                                             (setq sdata `((org-id . ,match-id)
+                                                           (org-sync-id . ,match-sync-id)
                                                            ,@sdata))
-                                             ;; Sync the processed semantic match data
-                                             (mrosetta-connector-send connector
-                                                                      ;; The identifier property symbol
-                                                                      'Org_ID
-                                                                      ;; The list of match instances to send
-                                                                      `(,sdata)
-                                                                      ;; Callback function
-                                                                      (lambda (did-succeed &rest params)
-                                                                        ;; Notify the user
-                                                                        (if did-succeed
-                                                                            (message "Mrosetta Metalanguage match synced successfully!")
-                                                                          (let ((msg (plist-get params :message)))
-                                                                            (message "Mrosetta send error: %s" msg))))
-                                                                      cparameters)
+                                             ;; Bite the webhook and send the processed semantic data
+                                             (mrosetta-connector-webhook-bite biting-hook
+                                                                              sdata
+                                                                              (lambda (did-succeed &rest cbargs)
+                                                                                (if did-succeed
+                                                                                    (message "Mrosetta Metalanguage match synced successfully!")
+                                                                                  (let ((msg (plist-get cbargs :message)))
+                                                                                    (message "Mrosetta webhook bite error: %s" msg)))))
                                              ;; Update the org entry itself
                                              (org-entry-put (point) "mrosetta-match-id" (number-to-string match-id))
                                              (org-entry-put (point) "mrosetta-match-sync-id" (number-to-string match-sync-id))))
@@ -2339,121 +2595,43 @@ Process the org heading at point.
                ;; Since while always returns nil, surface out the processing result
                did-match)))))
 #+END_SRC
-
-#+RESULTS: mrosetta-context-org-process
-: mrosetta-context-org-process-heading
-
 ***** Update Org Heading
 Sync all tracked matches with the specified connector endpoint.
 
-#+NAME: mrosetta-context-org-update
+#+NAME: mrosetta-context-org-update-headings
 #+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-context-org-update ((context mrosetta-context-org))
-  "Update all tracked org heading entries within CONTEXT."
-  (let ((mlexpression-index (mrosetta-context-org-db-mlexpression-collection (mrosetta-context-org-index context)))
-        (mlexpression-cache (mrosetta-context-org-mlexpressions context))
-        (connector (mrosetta-context-org-connector context)))
-    ;; Update all tracked matches accross all defined Metalanguage expressions
-    (dolist (mlexpression-index-entry-pair (mrosetta-context-org-collection-items mlexpression-index))
-      (let* ((mlexpression-index-entry (cdr mlexpression-index-entry-pair))
-             (mlexpression-id (mrosetta-context-org-entry-id mlexpression-index-entry))
-             (mlexpression-match-index (mrosetta-context-org-mlexpression-match-collection mlexpression-index-entry))
-             (cparameters (mapcan (lambda (cparameter-pair)
-                                    `(,(car cparameter-pair) ,(cdr cparameter-pair)))
-                                  (mrosetta-context-org-mlexpression-cparameters mlexpression-index-entry)))
-             (mlexpression (cdr (assq mlexpression-id mlexpression-cache))))
-        ;; Fetch any match instances marked as unsynced
-        (mrosetta-connector-receive connector
-                                    ;; The query property symbol
-                                    'Org_Did_Sync
-                                    ;; The query property value to match
-                                    "no"
-                                    ;; Callback function
-                                    (lambda (sdata &rest params)
-                                      (if sdata
-                                          (let ((match-sync-ids '()))
-                                            (dolist (instance-data sdata)
-                                              (let* ((exdata `(,(mrosetta-mlexpression-key mlexpression) . ,instance-data))
-                                                     (match-id (cdr (assq 'Org_ID instance-data)))
-                                                     (match-sync-id (cdr (assq 'Org_Sync_ID instance-data)))
-                                                     (match-index-entry (mrosetta-context-org-collection-get mlexpression-match-index match-id))
-                                                     (match-org-file (mrosetta-context-org-entry-file match-index-entry)))
-                                                ;; Push match ID for response payload
-                                                (push `(,match-id . ,match-sync-id) match-sync-ids)
-                                                ;; Update the org heading
-                                                (org-map-entries (lambda ()
-                                                                   (let* ((heading-text (mrosetta-context-org-heading-get))
-                                                                          (updated-heading-text (mrosetta-update mlexpression
-                                                                                                                 :text heading-text
-                                                                                                                 :sdata exdata)))
-                                                                     ;; Update the heading text
-                                                                     (mrosetta-context-org-heading-set updated-heading-text)
-                                                                     ;; Update the heading properties
-                                                                     (org-entry-put (point) "mrosetta-match-sync-id" match-sync-id)
-                                                                     ;; Update the match index entry
-                                                                     (mrosetta-context-org-match-sync-id-set match-index-entry match-sync-id)
-                                                                     ;; Notify the user
-                                                                     (message "Mrosetta Metalanguage match with id %s updated in file %s!"
-                                                                              (number-to-string match-id)
-                                                                              (number-to-string match-org-file))))
-                                                                 (concat "+mrosetta-match-id="
-                                                                         "\"" match-id "\"")
-                                                                 `(,match-org-file))))
-                                            ;; Send response confirmation
-                                            (let ((response-sdata (mapcar (lambda (match-sync-id-pair)
-                                                                            `((Org_ID . ,(car match-sync-id-pair))
-                                                                              (Org_Did_Sync . "yes")
-                                                                              (Org_Sync_ID . ,(cdr match-sync-id-pair))))
-                                                                          match-sync-ids)))
-                                              (mrosetta-connector-send connector
-                                                                       'Org_ID
-                                                                       response-sdata
-                                                                       (lambda (did-succeed &rest params)
-                                                                         (if did-succeed
-                                                                             (message "Mrosetta update for Metalanguage expression with id %s confirmed successfully!"
-                                                                                      (number-to-string mlexpression-id))
-                                                                           (let ((msg (plist-get params :message)))
-                                                                             (message "Mrosetta send error: %s" msg))))
-                                                                       cparameters)))
-                                        (let ((msg (plist-get params :message)))
-                                          (message "Mrosetta receive error: %s" msg))))
-                                    cparameters)))))
-#+END_SRC
-***** Sync
-Periodically sync local org entries with remote connector endpoints defined within respective Metalanguage expression declarations.
-
-#+NAME: mrosetta-context-org-sync
-#+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-context-org-sync ((context mrosetta-context-org))
-  "Update all tracked org headings of defined Metalanguage expressions within provided CONTEXT. Repeat every SYNC-INTERVAL specified within the CONTEXT slot, or nil for no repitition."
-  (let ((sync-interval (mrosetta-context-org-sync-interval context)))
-    ;; Run update within context
-    (mrosetta-context-org-update context)
-    ;; Schedule next update, if sync-interval set
-    (when sync-interval
-      (run-at-time (format "%s min" (number-to-string sync-interval))
-                   nil
-                   #'mrosetta-context-org-sync
-                   context))))
-#+END_SRC
-
-To start sync, call ~mrosetta-context-org-sync-start~ on the ~context~ object with the specified sync interval in minutes.
-
-#+NAME: mrosetta-context-org-sync-start
-#+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-context-org-sync-start ((context mrosetta-context-org) sync-interval)
-  "Commence with periodic synchronization within the specified CONTEXT. SYNC-INTERVAL specifies the synchronization interval in minutes."
-  (when (setf (slot-value context 'sync-interval) sync-interval)
-    (mrosetta-context-org-sync context)))
-#+END_SRC
-
-To stop sync, call ~mrosetta-context-org-sync-stop~ on the ~context~ object.
-
-#+NAME: mrosetta-context-org-sync-stop
-#+BEGIN_SRC emacs-lisp :tangle yes
-(cl-defmethod mrosetta-context-org-sync-stop ((context mrosetta-context-org))
-  "Stop the periodic synchronization within the specified CONTEXT."
-  (setf (slot-value context 'sync-interval) nil))
+(cl-defmethod mrosetta-context-org-update-headings ((context mrosetta-context-org) mlexpression-id sdata)
+  "Update all tracked org heading entries of a given MLEXPRESSION-ID within CONTEXT with semantic data contained within SDATA. SDATA is a list of one or more match structures."
+  (let* ((mlexpression-index (mrosetta-context-org-db-mlexpression-collection (mrosetta-context-org-index context)))
+         (mlexpression-index-entry (mrosetta-context-org-collection-get mlexpression-index mlexpression-id))
+         (mlexpression-match-index (mrosetta-context-org-mlexpression-match-collection mlexpression-index-entry))
+         (mlexpression-cache (mrosetta-context-org-mlexpressions context))
+         (mlexpression (cdr (assq mlexpression-id mlexpression-cache))))
+    ;; Iterate over all instances within sdata and update corresponding entries
+    (dolist (instance-sdata sdata)
+      (let* ((match-id (cdr (assq 'org-id instance-sdata)))
+             (match-sync-id (cdr (assq 'org-sync-id instance-sdata)))
+             (match-index-entry (mrosetta-context-org-collection-get mlexpression-match-index match-id))
+             (match-org-file (mrosetta-context-org-entry-file match-index-entry)))
+        ;; Find and update the corresponding org heading
+        (mrosetta-context-org-heading-find match-org-file
+                                           "mrosetta-match-id"
+                                           (number-to-string match-id)
+                                           (lambda ()
+                                             (let* ((original-text (mrosetta-context-org-heading-get))
+                                                    (updated-text (mrosetta-update mlexpression
+                                                                                   :text original-text
+                                                                                   :sdata instance-sdata)))
+                                               ;; Update the heading text
+                                               (mrosetta-context-org-heading-set updated-text)
+                                               ;; Update the heading properties
+                                               (org-entry-put (point) "mrosetta-match-sync-id" (number-to-string match-sync-id))
+                                               ;; Update the match index entry
+                                               (mrosetta-context-org-match-sync-id-set match-index-entry match-sync-id)
+                                               ;; Notify the user
+                                               (message "Mrosetta Metalanguage match with id %s updated in file %s!"
+                                                        (number-to-string match-id)
+                                                        match-org-file))))))))
 #+END_SRC
 * Configuration Example
 An example configuration of Metarosetta within an Emacs configuration file.
