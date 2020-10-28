@@ -492,8 +492,13 @@
   (let ((htext (or (plist-get args :text)
                    (plist-get args :inner)))
         (exkey (car (plist-get args :sdata)))
+        (exdata-set (when (cdr (plist-get args :sdata))
+                      t))
         (exdata (copy-tree (cdr (plist-get args :sdata))))
         (is-inner (plist-get args :inner))
+        ;; Inter-instance buffer persistence for list length mutability
+        (is-mutating)
+        (intra-buffers '())
         (newtext)
         (case-fold-search nil))
     (when (and exdata
@@ -508,10 +513,24 @@
                (string-match (mrosetta-mlexpression-regex mlexpression) htext)
                ;; Found metalanguage expression match
                (let ((extext (match-string (mrosetta-mlexpression-regex-key mlexpression) htext))
-                     (pos))
+                     (pos '()))
                  (save-match-data
-                   (while (string-match (mrosetta-mlexpression-rinstance mlexpression) extext pos)
-                     (setq pos (match-end 0))
+                   (while (or (and (string-match (mrosetta-mlexpression-rinstance mlexpression) extext (car pos))
+                                   ;; Handle lists of mutable lengths
+                                   (or (not (mrosetta-mlexpression-is-plural mlexpression))
+                                       ;; Leave unset lists in updated semantic data
+                                       (not exdata-set)
+                                       ;; Updated list, possibly with less elements than original
+                                       exdata)
+                                   ;; An instance matched within the original text, update pos
+                                   (push (match-end 0) pos))
+                              (and exdata
+                                   ;; No instances left within original text, but exdata still holding plural elements
+                                   (mrosetta-mlexpression-is-plural mlexpression)
+                                   ;; Reuse the last instance of original text as template
+                                   (string-match (mrosetta-mlexpression-rinstance mlexpression) extext (cadr pos))
+                                   ;; Mark as mutation
+                                   (setq is-mutating t)))
                      ;; Update each instance
                      (let ((instance-exdata (if (mrosetta-mlexpression-is-plural mlexpression) (pop exdata) exdata))
                            (instance-newtext))
@@ -527,6 +546,15 @@
                          (let ((left-buffer (match-string (mrosetta-mlexpression-left-rbuffer-key mlexpression) extext))
                                (right-buffer (match-string (mrosetta-mlexpression-right-rbuffer-key mlexpression) extext)))
                            (when (eq (mrosetta-mlexpression-extype mlexpression) :match)
+                             ;; Manage potential list mutation
+                             (when (mrosetta-mlexpression-is-plural mlexpression)
+                               ;; Inject buffer in cases of list length mutations, and no right buffer at last element
+                               (when (and is-mutating
+                                          (eq (length left-buffer) 0)
+                                          (eq (length (car intra-buffers)) 0))
+                                 (setq left-buffer (car (last intra-buffers))))
+                               ;; Persist inter-instance buffer
+                               (push right-buffer intra-buffers))
                              ;; Update match text, including ignorable matches
                              (let ((prefix (mrosetta-mlexpression-match-prefix mlexpression))
                                    (suffix (mrosetta-mlexpression-match-suffix mlexpression))

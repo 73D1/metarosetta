@@ -1175,8 +1175,13 @@ Process human-readable source text and output the original text semantically upd
   (let ((htext (or (plist-get args :text)
                    (plist-get args :inner)))
         (exkey (car (plist-get args :sdata)))
+        (exdata-set (when (cdr (plist-get args :sdata))
+                      t))
         (exdata (copy-tree (cdr (plist-get args :sdata))))
         (is-inner (plist-get args :inner))
+        ;; Inter-instance buffer persistence for list length mutability
+        (is-mutating)
+        (intra-buffers '())
         (newtext)
         (case-fold-search nil))
     (when (and exdata
@@ -1191,10 +1196,24 @@ Process human-readable source text and output the original text semantically upd
                (string-match (mrosetta-mlexpression-regex mlexpression) htext)
                ;; Found metalanguage expression match
                (let ((extext (match-string (mrosetta-mlexpression-regex-key mlexpression) htext))
-                     (pos))
+                     (pos '()))
                  (save-match-data
-                   (while (string-match (mrosetta-mlexpression-rinstance mlexpression) extext pos)
-                     (setq pos (match-end 0))
+                   (while (or (and (string-match (mrosetta-mlexpression-rinstance mlexpression) extext (car pos))
+                                   ;; Handle lists of mutable lengths
+                                   (or (not (mrosetta-mlexpression-is-plural mlexpression))
+                                       ;; Leave unset lists in updated semantic data
+                                       (not exdata-set)
+                                       ;; Updated list, possibly with less elements than original
+                                       exdata)
+                                   ;; An instance matched within the original text, update pos
+                                   (push (match-end 0) pos))
+                              (and exdata
+                                   ;; No instances left within original text, but exdata still holding plural elements
+                                   (mrosetta-mlexpression-is-plural mlexpression)
+                                   ;; Reuse the last instance of original text as template
+                                   (string-match (mrosetta-mlexpression-rinstance mlexpression) extext (cadr pos))
+                                   ;; Mark as mutation
+                                   (setq is-mutating t)))
                      ;; Update each instance
                      (let ((instance-exdata (if (mrosetta-mlexpression-is-plural mlexpression) (pop exdata) exdata))
                            (instance-newtext))
@@ -1210,6 +1229,15 @@ Process human-readable source text and output the original text semantically upd
                          (let ((left-buffer (match-string (mrosetta-mlexpression-left-rbuffer-key mlexpression) extext))
                                (right-buffer (match-string (mrosetta-mlexpression-right-rbuffer-key mlexpression) extext)))
                            (when (eq (mrosetta-mlexpression-extype mlexpression) :match)
+                             ;; Manage potential list mutation
+                             (when (mrosetta-mlexpression-is-plural mlexpression)
+                               ;; Inject buffer in cases of list length mutations, and no right buffer at last element
+                               (when (and is-mutating
+                                          (eq (length left-buffer) 0)
+                                          (eq (length (car intra-buffers)) 0))
+                                 (setq left-buffer (car (last intra-buffers))))
+                               ;; Persist inter-instance buffer
+                               (push right-buffer intra-buffers))
                              ;; Update match text, including ignorable matches
                              (let ((prefix (mrosetta-mlexpression-match-prefix mlexpression))
                                    (suffix (mrosetta-mlexpression-match-suffix mlexpression))
@@ -1585,13 +1613,13 @@ Now, we can pass in an updated property or two. The properties not included will
 
 #+NAME: demo-regen-data
 #+BEGIN_EXAMPLE
-(priority . "BLOCKER") (types "backend" "frontend")
+(priority . "BLOCKER") (types "backend" "frontend" "devops")
 #+END_EXAMPLE
 
 #+CALL: demo-mlexpression-update( definition=demo-regen, input-text=demo-regen-text, input-data=demo-regen-data )
 
 #+RESULTS:
-: "BLOCKER task created in backend/api for #backend #frontend!"
+: "BLOCKER task created in backend/api for #backend #frontend #devops!"
 
 * Connector
 The connector layer enables processed semantic data to be sent out to a webhook-listening receiver, or, inversely, have incoming semantic data update the original text in context.
@@ -2771,8 +2799,8 @@ Start the context listener for incoming webhooks.
 #+NAME: config-listener-start
 #+BEGIN_SRC emacs-lisp :session mrosetta-config
 (mrosetta-context-org-start-listening mrosetta-context-org-default
-                                      "lappy.btedeschi.com"
-                                      8080)
+                                      "laptop.btedeschi.com"
+                                      9090)
 #+END_SRC
 ** Stop Listening
 Stop the context listener before quitting Emacs.
