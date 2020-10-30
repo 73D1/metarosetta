@@ -1,4 +1,4 @@
-;;; metarosetta.el --- A semantically-driven interconnectivity framework -*- lexical-binding: t -*-
+;;; metarosetta.el --- A semantically-driven interconnectivity framework -*- lexical-binding: t; -*-
 
 ;; Author: Bruno Tedeschi <me@btedeschi.com>
 
@@ -550,8 +550,8 @@
                              (when (mrosetta-mlexpression-is-plural mlexpression)
                                ;; Inject buffer in cases of list length mutations, and no right buffer at last element
                                (when (and is-mutating
-                                          (eq (length left-buffer) 0)
-                                          (eq (length (car intra-buffers)) 0))
+                                          (string-empty-p left-buffer)
+                                          (string-empty-p (car intra-buffers)))
                                  (setq left-buffer (car (last intra-buffers))))
                                ;; Persist inter-instance buffer
                                (push right-buffer intra-buffers))
@@ -572,15 +572,16 @@
 (defun mrosetta-connector-payload-compile (payload)
   "Compile the provided PAYLOAD Lisp object before serialization."
   (or (and (listp payload)
-           ;; Alist Item, Alist or Collection
-           (or (and (symbolp (car payload))
-                    ;; Alist Item
-                    `(,(car payload) . ,(mrosetta-connector-payload-compile (cdr payload))))
-               (and (symbolp (caar payload))
+           ;; Alist, Alist Item or Collection
+           (or (and (listp (car payload))
+                    (symbolp (caar payload))
                     ;; Alist
                     (mapcar (lambda (item)
                               (mrosetta-connector-payload-compile item))
                             payload))
+               (and (symbolp (car payload))
+                    ;; Alist Item
+                    `(,(car payload) . ,(mrosetta-connector-payload-compile (cdr payload))))
                ;; Collection
                (vconcat (mapcar (lambda (item)
                                   (mrosetta-connector-payload-compile item))
@@ -591,15 +592,16 @@
 (defun mrosetta-connector-payload-decompile (payload)
   "Decompile the provided PAYLOAD Lisp object after deserialization."
   (or (and (listp payload)
-           ;; Alist Item or Alist
-           (or (and (symbolp (car payload))
-                    ;; Alist Item
-                    `(,(car payload) . ,(mrosetta-connector-payload-decompile (cdr payload))))
-               (and (symbolp (caar payload))
+           ;; Alist or Alist Item
+           (or (and (listp (car payload))
+                    (symbolp (caar payload))
                     ;; Alist
                     (mapcar (lambda (item)
                               (mrosetta-connector-payload-decompile item))
                             payload))
+               (and (symbolp (car payload))
+                    ;; Alist Item
+                    `(,(car payload) . ,(mrosetta-connector-payload-decompile (cdr payload))))
                ;; Unpredicted state
                (error "Payload decompilation error: Deserialized lists can only be property-value pairs, or alists")))
       (and (vectorp payload)
@@ -633,7 +635,7 @@
         (url-callback (plist-get url-args :callback)))
     ;; Retrieve asynchronously
     (url-retrieve full-url
-                  (lambda (_status callback-cbarg)
+                  (lambda (_status)
                     (let (success
                           status-code
                           status-message
@@ -653,14 +655,13 @@
                         ;; Else, set the status message from the payload
                         (setq status-message (cdr (assq 'message payload))))
                       ;; Call back the callback function with the response data
-                      (funcall callback-cbarg
+                      (funcall url-callback
                                :success success
                                :status-code status-code
                                :status-message status-message
                                :payload payload))
                     ;; Kill the response buffer
-                    (kill-buffer))
-                  `(,url-callback))))
+                    (kill-buffer)))))
 
 (defclass mrosetta-connector-http-listener ()
   ((hostname
@@ -789,7 +790,8 @@
     ;; Create the HTTP request and register callback
     (mrosetta-connector-http-request bite-url
                                      :verb :POST
-                                     :payload sdata
+                                     ;; sdata is by Mrosetta fractal convention an alist *item*, i.e. a cons cell
+                                     :payload `(,sdata)
                                      :callback (lambda (&rest cbargs)
                                                  (let ((success (plist-get cbargs :success))
                                                        (msg (plist-get cbargs :status-message)))
@@ -833,7 +835,10 @@
                                                          :verb :POST
                                                          :id (slot-value webhook 'id)
                                                          :callback (lambda (&rest cbargs)
-                                                                     (let* ((sdata (plist-get cbargs :payload))
+                                                                     (let* ((sdata (mapcar (lambda (payload-item)
+                                                                                             ;; Convert alist to fractal cons cell
+                                                                                             (car payload-item))
+                                                                                           (plist-get cbargs :payload)))
                                                                             (res-args (funcall catch-callback sdata))
                                                                             (res-success (plist-get res-args :success))
                                                                             (res-message (plist-get res-args :message)))
@@ -1168,15 +1173,18 @@
     (mapc (lambda (hookpair)
             (let ((mlexpression-id (car hookpair))
                   (am-alive-hook (cdr hookpair)))
-              (mrosetta-connector-webhook-bite am-alive-hook t
-                                               (lambda (did-succeed &rest cbargs)
-                                                 (if did-succeed
-                                                     (message "Mrosetta broadcasted availability for match updates of Metalanguage expression with id %s!"
-                                                              (number-to-string mlexpression-id))
-                                                   (let ((msg (plist-get cbargs :message)))
-                                                     (message "Mrosetta broadcast of availability error for Metalanguage expression with id %s: %s"
-                                                              (number-to-string mlexpression-id) msg)))))))
-          am-alive-hooks)))
+              (when am-alive-hook
+                (mrosetta-connector-webhook-bite am-alive-hook t
+                                                 (lambda (did-succeed &rest cbargs)
+                                                   (if did-succeed
+                                                       (message "Mrosetta broadcasted availability for match updates of Metalanguage expression with id %s!"
+                                                                (number-to-string mlexpression-id))
+                                                     (let ((msg (plist-get cbargs :message)))
+                                                       (message "Mrosetta broadcast of availability error for Metalanguage expression with id %s: %s"
+                                                                (number-to-string mlexpression-id) msg))))))))
+          am-alive-hooks)
+    ;; Notify the user
+    (message "Metarosetta context listener started successfully!")))
 
 (cl-defmethod mrosetta-context-org-stop-listening ((context mrosetta-context-org))
   "Stop listening for incoming semantic data within CONTEXT."
@@ -1187,16 +1195,19 @@
       (let* ((mlexpressoin-id (car mlexpression-index-entry-pair))
              (mlexpression-index-entry (cdr mlexpression-index-entry-pair))
              (am-alive-hook (mrosetta-context-org-mlexpression-am-alive-hook mlexpression-index-entry)))
-        (mrosetta-connector-webhook-bite am-alive-hook nil
-                                         (lambda (did-succeed &rest cbargs)
-                                           (if did-succeed
-                                               (message "Mrosetta broadcasted availability termination for match updates of Metalanguage epxression with id %s!"
-                                                        (number-to-string mlexpressoin-id))
-                                             (let ((msg (plist-get cbargs :message)))
-                                               (message "Mrosetta broadcast of availability termination error for Metalanguage expression with id %s: %s"
-                                                        (number-to-string mlexpressoin-id) msg)))))))
+        (when am-alive-hook
+          (mrosetta-connector-webhook-bite am-alive-hook nil
+                                           (lambda (did-succeed &rest cbargs)
+                                             (if did-succeed
+                                                 (message "Mrosetta broadcasted availability termination for match updates of Metalanguage epxression with id %s!"
+                                                          (number-to-string mlexpressoin-id))
+                                               (let ((msg (plist-get cbargs :message)))
+                                                 (message "Mrosetta broadcast of availability termination error for Metalanguage expression with id %s: %s"
+                                                          (number-to-string mlexpressoin-id) msg))))))))
     ;; Stop listener
-    (mrosetta-connector-http-listener-stop listener)))
+    (mrosetta-connector-http-listener-stop listener)
+    ;; Notify the user
+    (message "Metarosetta context listener stopped successfully!")))
 
 (cl-defmethod mrosetta-context-org-process-heading ((context mrosetta-context-org))
   "Process the heading at point by the provided Metarosetta CONTEXT."
@@ -1251,35 +1262,36 @@
                             (mrosetta-context-org-mlexpression-am-alive-hook-set mlexpression-index-entry
                                                                                  (mrosetta-connector-webhook-biting-am-alive :url am-alive-hook-url)))))
                       ;; Parse the local catching hook path or generate a new one, and setup the webhook accordingly
-                      (let ((catching-hook-path (or (and catching-hook-url
-                                                         (save-match-data
-                                                           (and (string-match "http\\(?:s\\)?://.+/\\(.+\\)" catching-hook-url)
-                                                                (match-string 1 catching-hook-url))))
-                                                    (mapconcat (lambda (char)
-                                                                 (char-to-string (+ char
-                                                                                    (random (1+ (- ?z char))))))
-                                                               (make-list 17 ?a)
-                                                               "")))
-                            (hook (mrosetta-context-org-mlexpression-catching-hook mlexpression-index-entry)))
-                        (if hook
-                            (mrosetta-connector-webhook-catching-path-set hook catching-hook-path)
-                          (setq hook (mrosetta-connector-webhook-catching :path catching-hook-path))
-                          (mrosetta-context-org-mlexpression-catching-hook-set mlexpression-index-entry hook))
-                        ;; Stop the listener
-                        (mrosetta-connector-http-listener-stop listener)
-                        ;; Register the webhook
-                        (mrosetta-connector-webhook-catch hook
-                                                          listener
-                                                          (lambda (sdata)
-                                                            ;; Update headings within the context of the Metalanguage expression
-                                                            (mrosetta-context-org-update-headings context mlexpression-id sdata)
-                                                            ;; Confirm successful reception of data
-                                                            ;; (Parse info not included within the response for simplicity's sake)
-                                                            `(:success t)))
-                        ;; Start the listener
-                        (mrosetta-connector-http-listener-start listener)
-                        ;; Update the webhook url
-                        (setq catching-hook-url (mrosetta-connector-webhook-catching-url hook listener)))
+                      (when listener
+                        (let ((catching-hook-path (or (and catching-hook-url
+                                                           (save-match-data
+                                                             (and (string-match "http\\(?:s\\)?://.+/\\(.+\\)" catching-hook-url)
+                                                                  (match-string 1 catching-hook-url))))
+                                                      (mapconcat (lambda (char)
+                                                                   (char-to-string (+ char
+                                                                                      (random (1+ (- ?z char))))))
+                                                                 (make-list 17 ?a)
+                                                                 "")))
+                              (hook (mrosetta-context-org-mlexpression-catching-hook mlexpression-index-entry)))
+                          (if hook
+                              (mrosetta-connector-webhook-catching-path-set hook catching-hook-path)
+                            (setq hook (mrosetta-connector-webhook-catching :path catching-hook-path))
+                            (mrosetta-context-org-mlexpression-catching-hook-set mlexpression-index-entry hook))
+                          ;; Stop the listener
+                          (mrosetta-connector-http-listener-stop listener)
+                          ;; Register the webhook
+                          (mrosetta-connector-webhook-catch hook
+                                                            listener
+                                                            (lambda (sdata)
+                                                              ;; Update headings within the context of the Metalanguage expression
+                                                              (mrosetta-context-org-update-headings context mlexpression-id sdata)
+                                                              ;; Confirm successful reception of data
+                                                              ;; (Parse info not included within the response for simplicity's sake)
+                                                              `(:success t)))
+                          ;; Start the listener
+                          (mrosetta-connector-http-listener-start listener)
+                          ;; Update the webhook url
+                          (setq catching-hook-url (mrosetta-connector-webhook-catching-url hook listener))))
                       ;; Parse and compile the Metalanguage expression
                       (mrosetta-parse mlexpression)
                       (mrosetta-compile mlexpression)
@@ -1323,9 +1335,9 @@
                                              (setq match-index-entry (mrosetta-context-org-collection-set mlexpression-match-index match-index-entry))
                                              (setq match-id (mrosetta-context-org-entry-id match-index-entry))
                                              ;; Add sync metadata
-                                             (setq sdata `((org-id . ,match-id)
-                                                           (org-sync-id . ,match-sync-id)
-                                                           ,@sdata))
+                                             (setq sdata `(,(car sdata) . ((org-id . ,match-id)
+                                                                           (org-sync-id . ,match-sync-id)
+                                                                           ,@(cdr sdata))))
                                              ;; Bite the webhook and send the processed semantic data
                                              (mrosetta-connector-webhook-bite biting-hook
                                                                               sdata
@@ -1350,8 +1362,9 @@
          (mlexpression (cdr (assq mlexpression-id mlexpression-cache))))
     ;; Iterate over all instances within sdata and update corresponding entries
     (dolist (instance-sdata sdata)
-      (let* ((match-id (cdr (assq 'org-id instance-sdata)))
-             (match-sync-id (cdr (assq 'org-sync-id instance-sdata)))
+      (let* ((exdata (cdr instance-sdata))
+             (match-id (cdr (assq 'org-id exdata)))
+             (match-sync-id (cdr (assq 'org-sync-id exdata)))
              (match-index-entry (mrosetta-context-org-collection-get mlexpression-match-index match-id))
              (match-org-file (mrosetta-context-org-entry-file match-index-entry)))
         ;; Find and update the corresponding org heading
