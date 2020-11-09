@@ -792,9 +792,9 @@
                                      :verb :POST
                                      ;; sdata is by Mrosetta fractal convention an alist *item*, i.e. a cons cell
                                      :payload `(,sdata)
-                                     :callback (lambda (&rest cbargs)
-                                                 (let ((success (plist-get cbargs :success))
-                                                       (msg (plist-get cbargs :status-message)))
+                                     :callback (lambda (&rest req-cbargs)
+                                                 (let ((success (plist-get req-cbargs :success))
+                                                       (msg (plist-get req-cbargs :status-message)))
                                                    (funcall bite-callback success :message msg))))))
 
 (defclass mrosetta-connector-webhook-biting-am-alive (mrosetta-connector-webhook-biting)
@@ -834,11 +834,18 @@
           (mrosetta-connector-http-listener-endpoint-set listener catch-path
                                                          :verb :POST
                                                          :id (slot-value webhook 'id)
-                                                         :callback (lambda (&rest cbargs)
-                                                                     (let* ((sdata (mapcar (lambda (payload-item)
-                                                                                             ;; Convert alist to fractal cons cell
-                                                                                             (car payload-item))
-                                                                                           (plist-get cbargs :payload)))
+                                                         :callback (lambda (&rest ep-cbargs)
+                                                                     (let* ((payload (plist-get ep-cbargs :payload))
+                                                                            ;; By protocol convention, an alist is received containing a single cons pair
+                                                                            (sdata-items-key (caar payload))
+                                                                            ;; The car of the pair is the Mrosetta element's key in plural
+                                                                            (sdata-item-key (intern (substring (symbol-name sdata-items-key) 0 -1)))
+                                                                            ;; The cdr of the pair is a list of one or more semantic data structure sets
+                                                                            (sdata-items (cdar payload))
+                                                                            (sdata (mapcar (lambda (sdata-item)
+                                                                                             ;; Convert list item to a fractal cons cell
+                                                                                             `(,sdata-item-key . ,sdata-item))
+                                                                                           sdata-items))
                                                                             (res-args (funcall catch-callback sdata))
                                                                             (res-success (plist-get res-args :success))
                                                                             (res-message (plist-get res-args :message)))
@@ -1158,13 +1165,14 @@
              (am-alive-hook (mrosetta-context-org-mlexpression-am-alive-hook mlexpression-index-entry))
              (catching-hook (mrosetta-context-org-mlexpression-catching-hook mlexpression-index-entry)))
         ;; Register catcher
-        (mrosetta-connector-webhook-catch catching-hook
-                                          listener
-                                          (lambda (sdata)
-                                            ;; Update headings within the context of the Metalanguage expression
-                                            (mrosetta-context-org-update-headings context mlexpression-id sdata)
-                                            ;; Confirm successful reception of data
-                                            `(:success t)))
+        (when catching-hook
+          (mrosetta-connector-webhook-catch catching-hook
+                                            listener
+                                            (lambda (sdata)
+                                              ;; Update headings within the context of the Metalanguage expression
+                                              (mrosetta-context-org-update-headings context mlexpression-id sdata)
+                                              ;; Confirm successful reception of data
+                                              `(:success t))))
         ;; Queue am-alive hooks
         (push `(,mlexpression-id . ,am-alive-hook) am-alive-hooks)))
     ;; Start listener
@@ -1217,19 +1225,19 @@
                   ;; Process the Metarosetta Metalanguage expression definition
                   (let* ((input-text (match-string 1 heading-text))
                          (mldefinition (car (read-from-string (concat "(" input-text ")"))))
-                         (mlexpression-id (let ((id-property (org-entry-get (point) "mrosetta-mlexpression-id")))
+                         (mlexpression-id (let ((id-property (org-entry-get (point) "MROSETTA_MLEXPRESSION_ID")))
                                             (when (and id-property
                                                        (not (string-empty-p id-property)))
                                               (string-to-number id-property))))
-                         (biting-hook-url (let ((hook-url (org-entry-get (point) "mrosetta-mlexpression-bite-url")))
+                         (biting-hook-url (let ((hook-url (org-entry-get (point) "MROSETTA_MLEXPRESSION_BITE_URL")))
                                             (when (and hook-url
                                                        (not (string-empty-p hook-url)))
                                               hook-url)))
-                         (am-alive-hook-url (let ((hook-url (org-entry-get (point) "mrosetta-mlexpression-am-alive-url")))
+                         (am-alive-hook-url (let ((hook-url (org-entry-get (point) "MROSETTA_MLEXPRESSION_AM_ALIVE_URL")))
                                               (when (and hook-url
                                                          (not (string-empty-p hook-url)))
                                                 hook-url)))
-                         (catching-hook-url (let ((hook-url (org-entry-get (point) "mrosetta-mlexpression-catch-url")))
+                         (catching-hook-url (let ((hook-url (org-entry-get (point) "MROSETTA_MLEXPRESSION_CATCH_URL")))
                                               (when (and hook-url
                                                          (not (string-empty-p hook-url)))
                                                 hook-url)))
@@ -1258,7 +1266,7 @@
                       (when am-alive-hook-url
                         (let ((hook (mrosetta-context-org-mlexpression-am-alive-hook mlexpression-index-entry)))
                           (if hook
-                              (mrosetta-connector-webhook-biting-url-set hook biting-hook-url)
+                              (mrosetta-connector-webhook-biting-url-set hook am-alive-hook-url)
                             (mrosetta-context-org-mlexpression-am-alive-hook-set mlexpression-index-entry
                                                                                  (mrosetta-connector-webhook-biting-am-alive :url am-alive-hook-url)))))
                       ;; Parse the local catching hook path or generate a new one, and setup the webhook accordingly
@@ -1300,11 +1308,11 @@
                       (push `(,mlexpression-id . ,mlexpression) (slot-value context 'mlexpressions))
                       ;; Populate the org entry istelf with Metarosetta properties
                       ;; Expression ID
-                      (org-entry-put (point) "mrosetta-mlexpression-id" (number-to-string mlexpression-id))
+                      (org-entry-put (point) "MROSETTA_MLEXPRESSION_ID" (number-to-string mlexpression-id))
                       ;; Webhooks
-                      (org-entry-put (point) "mrosetta-mlexpression-bite-url" biting-hook-url)
-                      (org-entry-put (point) "mrosetta-mlexpression-am-alive-url" am-alive-hook-url)
-                      (org-entry-put (point) "mrosetta-mlexpression-catch-url" catching-hook-url)
+                      (org-entry-put (point) "MROSETTA_MLEXPRESSION_BITE_URL" biting-hook-url)
+                      (org-entry-put (point) "MROSETTA_MLEXPRESSION_AM_ALIVE_URL" am-alive-hook-url)
+                      (org-entry-put (point) "MROSETTA_MLEXPRESSION_CATCH_URL" catching-hook-url)
                       ;; Notify the user
                       (message "Mrosetta Metalanguage expression processed successfully!"))))
              (let* (did-match
@@ -1323,7 +1331,7 @@
                                                                                                                mlexpression-id))
                                                 (biting-hook (mrosetta-context-org-mlexpression-biting-hook mlexpression-index-entry))
                                                 (mlexpression-match-index (mrosetta-context-org-mlexpression-match-collection mlexpression-index-entry))
-                                                (match-id (let ((id-property (org-entry-get (point) "mrosetta-match-id")))
+                                                (match-id (let ((id-property (org-entry-get (point) "MROSETTA_MATCH_ID")))
                                                             (when (and id-property
                                                                        (not (string-empty-p id-property)))
                                                               (string-to-number id-property))))
@@ -1336,19 +1344,19 @@
                                              (setq match-id (mrosetta-context-org-entry-id match-index-entry))
                                              ;; Add sync metadata
                                              (setq sdata `(,(car sdata) . ((org-id . ,match-id)
-                                                                           (org-sync-id . ,match-sync-id)
+                                                                           (sync-id . ,match-sync-id)
                                                                            ,@(cdr sdata))))
                                              ;; Bite the webhook and send the processed semantic data
                                              (mrosetta-connector-webhook-bite biting-hook
                                                                               sdata
-                                                                              (lambda (did-succeed &rest cbargs)
+                                                                              (lambda (did-succeed &rest bitten-cbargs)
                                                                                 (if did-succeed
                                                                                     (message "Mrosetta Metalanguage match synced successfully!")
-                                                                                  (let ((msg (plist-get cbargs :message)))
+                                                                                  (let ((msg (plist-get bitten-cbargs :message)))
                                                                                     (message "Mrosetta webhook bite error: %s" msg)))))
                                              ;; Update the org entry itself
-                                             (org-entry-put (point) "mrosetta-match-id" (number-to-string match-id))
-                                             (org-entry-put (point) "mrosetta-match-sync-id" (number-to-string match-sync-id))))
+                                             (org-entry-put (point) "MROSETTA_MATCH_ID" (number-to-string match-id))
+                                             (org-entry-put (point) "MROSETTA_MATCH_SYNC_ID" (number-to-string match-sync-id))))
                                          (setq did-match t)))))))
                ;; Since while always returns nil, surface out the processing result
                did-match)))))
@@ -1364,12 +1372,12 @@
     (dolist (instance-sdata sdata)
       (let* ((exdata (cdr instance-sdata))
              (match-id (cdr (assq 'org-id exdata)))
-             (match-sync-id (cdr (assq 'org-sync-id exdata)))
+             (match-sync-id (cdr (assq 'sync-id exdata)))
              (match-index-entry (mrosetta-context-org-collection-get mlexpression-match-index match-id))
              (match-org-file (mrosetta-context-org-entry-file match-index-entry)))
         ;; Find and update the corresponding org heading
         (mrosetta-context-org-heading-find match-org-file
-                                           "mrosetta-match-id"
+                                           "MROSETTA_MATCH_ID"
                                            (number-to-string match-id)
                                            (lambda ()
                                              (let* ((original-text (mrosetta-context-org-heading-get))
@@ -1379,7 +1387,7 @@
                                                ;; Update the heading text
                                                (mrosetta-context-org-heading-set updated-text)
                                                ;; Update the heading properties
-                                               (org-entry-put (point) "mrosetta-match-sync-id" (number-to-string match-sync-id))
+                                               (org-entry-put (point) "MROSETTA_MATCH_SYNC_ID" (number-to-string match-sync-id))
                                                ;; Update the match index entry
                                                (mrosetta-context-org-match-sync-id-set match-index-entry match-sync-id)
                                                ;; Notify the user
