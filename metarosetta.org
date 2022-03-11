@@ -281,6 +281,8 @@ Regular expressions used for matching buffer characters surrounding the match.
 
 By default, these are /whitespace/ characters between words and used purely for original text reconstruction with updated target data, or for text compilation off an entirely new, structure-compatible, data set.
 
+To avoid redundancy, and useless regex overlaps, the convention is that each (sub-)expression captures the left surrounding buffer, while leaving the right one off to the subsequent expression to be captured as its respective left buffer. Of course, this implies that any rightmost buffer space is left unmatched, and as such omitted from any textual reconstruction. This in practice clears any trailing whitespace from (re)constructed text.
+
 #+NAME: mrosetta-mlexpression-rbuffer
 #+BEGIN_SRC emacs-lisp
 (rbuffer
@@ -293,22 +295,12 @@ By default, these are /whitespace/ characters between words and used purely for 
 ******* Left Buffer
 The regular expression group key for the left buffer.
 
-#+NAME: mrosetta-mlexpression-left-rbuffer-key
+#+NAME: mrosetta-mlexpression-rbuffer-key
 #+BEGIN_SRC emacs-lisp
-(left-rbuffer-key
+(rbuffer-key
  :type number
  :documentation "The regex group key for the encompassing expression's left buffer match."
- :reader mrosetta-mlexpression-left-rbuffer-key)
-#+END_SRC
-******* Right Buffer
-The regular expression group key for the right buffer.
-
-#+NAME: mrosetta-mlexpression-right-rbuffer-key
-#+BEGIN_SRC emacs-lisp
-(right-rbuffer-key
- :type number
- :documentation "The regex group key for the encompassing expression's right buffer match."
- :reader mrosetta-mlexpression-right-rbuffer-key)
+ :reader mrosetta-mlexpression-rbuffer-key)
 #+END_SRC
 **** Key
 The property key to which the expression output value is assigned, if the expression itself is denoted as such.
@@ -471,8 +463,7 @@ The /expression/ class is defined below, containing all the properties listed ab
    <<mrosetta-mlexpression-left-rboundary>>
    <<mrosetta-mlexpression-right-rboundary>>
    <<mrosetta-mlexpression-rbuffer>>
-   <<mrosetta-mlexpression-left-rbuffer-key>>
-   <<mrosetta-mlexpression-right-rbuffer-key>>
+   <<mrosetta-mlexpression-rbuffer-key>>
    <<mrosetta-mlexpression-key>>
    <<mrosetta-mlexpression-is-uppercase>>
    <<mrosetta-mlexpression-is-capitalized>>
@@ -1066,8 +1057,7 @@ Compile the entire fractal tree within the root expression instance into a regul
          (left-rboundary (slot-value mlexpression 'left-rboundary))
          (right-rboundary (slot-value mlexpression 'right-rboundary))
          (rbuffer (slot-value mlexpression 'rbuffer))
-         (left-rbuffer-key (mrosetta-keychain-generate-key rkeychain))
-         (right-rbuffer-key (mrosetta-keychain-generate-key rkeychain))
+         (rbuffer-key (mrosetta-keychain-generate-key rkeychain))
          (is-contextual (slot-value mlexpression 'is-contextual))
          (is-optional (slot-value mlexpression 'is-optional))
          (is-plural (slot-value mlexpression 'is-plural)))
@@ -1085,13 +1075,12 @@ Compile the entire fractal tree within the root expression instance into a regul
     ;; Compile the total match, instance and expression-encompassing regular expressions
     (setq rmatch (concat "\\(?" (number-to-string rmatch-key) ":" rmatch "\\)"))
     (setq rinstance (concat "\\(?" (number-to-string rinstance-key) ":"
+                            "\\(?" (number-to-string rbuffer-key) ":" rbuffer "\\)"
                             (when (not is-contextual)
-                              (concat "\\(?" (number-to-string left-rbuffer-key) ":" rbuffer "\\)"
-                                      (or rprefix left-rboundary)))
+                              (or rprefix left-rboundary))
                             rmatch
                             (when (not is-contextual)
-                              (concat (or rsuffix right-rboundary)
-                                      "\\(?" (number-to-string right-rbuffer-key) ":" rbuffer "\\)"))
+                              (or rsuffix right-rboundary))
                             "\\)"))
     (setq regex (concat "\\(?" (number-to-string regex-key) ":"
                         rinstance
@@ -1100,8 +1089,7 @@ Compile the entire fractal tree within the root expression instance into a regul
                         (when is-optional "?")))
     (setf (slot-value mlexpression 'rmatch-key) rmatch-key
           (slot-value mlexpression 'rmatch) rmatch
-          (slot-value mlexpression 'left-rbuffer-key) left-rbuffer-key
-          (slot-value mlexpression 'right-rbuffer-key) right-rbuffer-key
+          (slot-value mlexpression 'rbuffer-key) rbuffer-key
           (slot-value mlexpression 'rinstance-key) rinstance-key
           (slot-value mlexpression 'rinstance) rinstance
           (slot-value mlexpression 'regex-key) regex-key
@@ -1115,53 +1103,53 @@ Process human-readable source text and output the semantically-significant data 
 #+BEGIN_SRC emacs-lisp :tangle yes
 (cl-defmethod mrosetta-process ((mlexpression mrosetta-mlexpression) &rest args)
   "Process human-readable text of the :text or :inner string within ARGS and return the semantically-significant data structure as defined by the MLEXPRESSION instance."
+  (when (mrosetta-mlexpression-should-ignore mlexpression)
+    (error "Metalanguage semantic error: Root expressions cannot be ignorable"))
   (let ((htext (or (plist-get args :text)
                    (plist-get args :inner)))
-        (is-inner (plist-get args :inner))
+        (exregex (mrosetta-mlexpression-regex mlexpression))
         (exdata '())
         (case-fold-search nil))
-    (or (when (and (mrosetta-mlexpression-is-contextual mlexpression) is-inner)
-          ;; Return the full inner-text matched within the parent expression if not marked as ignorable
-          (when (and (eq (mrosetta-mlexpression-extype mlexpression) :match)
-                     (not (mrosetta-mlexpression-should-ignore mlexpression)))
-            `(,(or (mrosetta-mlexpression-key mlexpression) :nokey) . ,htext)))
-        (save-match-data
-          (and htext
-               (string-match (mrosetta-mlexpression-regex mlexpression) htext)
-               ;; Found match for the entirety of the expression
-               (let ((extext (match-string (mrosetta-mlexpression-regex-key mlexpression) htext))
-                     (pos))
-                 (save-match-data
-                   ;; Iterate over all instance occurrences within the expression-matching text
-                   (while (string-match (mrosetta-mlexpression-rinstance mlexpression) extext pos)
-                     (setq pos (match-end 0))
-                     ;; Process the exact match as defined by the expression
-                     (let ((instance-exdata))
-                       ;; Cases where the expression is a :fractal
-                       (when (eq (mrosetta-mlexpression-extype mlexpression) :fractal)
-                         ;; Recursively process all fractals within
-                         (let ((fractals (mrosetta-mlexpression-fractals mlexpression)))
-                           (dolist (fractal fractals)
-                             (let ((fractal-exdata (mrosetta-process fractal :inner (match-string (mrosetta-mlexpression-regex-key fractal) extext))))
-                               (when fractal-exdata
-                                 (setq instance-exdata `(,@instance-exdata ,fractal-exdata)))))))
-                       ;; Cases where the expression is a :match
-                       (when (and (eq (mrosetta-mlexpression-extype mlexpression) :match)
-                                  (not (mrosetta-mlexpression-should-ignore mlexpression)))
-                         ;; Just store the end-match, modified if defined as such
-                         (let ((match (match-string (mrosetta-mlexpression-rmatch-key mlexpression) extext))
-                               (modifier (mrosetta-mlexpression-modifier mlexpression)))
-                           (when modifier
-                             (setq match (funcall modifier match)))
-                           (setq instance-exdata match)))
-                       (when instance-exdata
-                         (setq exdata `(,@exdata ,instance-exdata)))))
-                   (when exdata
-                     ;; Splice instance data in case of a singular expression
-                     (when (not (mrosetta-mlexpression-is-plural mlexpression))
-                       (setq exdata (car exdata)))
-                     ;; Return the structured data object
-                     `(,(or (mrosetta-mlexpression-key mlexpression) :nokey) . ,exdata)))))))))
+    (when (mrosetta-mlexpression-is-contextual mlexpression)
+      ;; Ensure complete matches of contextual expressions
+      (setq exregex (concat "^" exregex "$")))
+    (save-match-data
+      (and htext
+           (string-match exregex htext)
+           ;; Found match for the entirety of the expression
+           (let ((extext (match-string (mrosetta-mlexpression-regex-key mlexpression) htext))
+                 (pos))
+             (save-match-data
+               ;; Iterate over all instance occurrences within the expression-matching text
+               (while (string-match (mrosetta-mlexpression-rinstance mlexpression) extext pos)
+                 (setq pos (match-end 0))
+                 ;; Process the exact match as defined by the expression
+                 (let ((instance-exdata))
+                   ;; Cases where the expression is a :fractal
+                   (when (eq (mrosetta-mlexpression-extype mlexpression) :fractal)
+                     ;; Recursively process all non-ignorable fractals within
+                     (let ((fractals (mrosetta-mlexpression-fractals mlexpression)))
+                       (dolist (fractal fractals)
+                         (when (not (mrosetta-mlexpression-should-ignore fractal))
+                           (let ((fractal-exdata (mrosetta-process fractal :inner (match-string (mrosetta-mlexpression-regex-key fractal) extext))))
+                             (when fractal-exdata
+                               (setq instance-exdata `(,@instance-exdata ,fractal-exdata))))))))
+                   ;; Cases where the expression is a :match
+                   (when (eq (mrosetta-mlexpression-extype mlexpression) :match)
+                     ;; Just store the end-match, modified if defined as such
+                     (let ((match (match-string (mrosetta-mlexpression-rmatch-key mlexpression) extext))
+                           (modifier (mrosetta-mlexpression-modifier mlexpression)))
+                       (when modifier
+                         (setq match (funcall modifier match)))
+                       (setq instance-exdata match)))
+                   (when instance-exdata
+                     (setq exdata `(,@exdata ,instance-exdata)))))
+               (when exdata
+                 ;; Splice instance data in case of a singular expression
+                 (when (not (mrosetta-mlexpression-is-plural mlexpression))
+                   (setq exdata (car exdata)))
+                 ;; Return the structured data object
+                 `(,(or (mrosetta-mlexpression-key mlexpression) :nokey) . ,exdata))))))))
 #+END_SRC
 
 * Text Updating
@@ -1173,82 +1161,67 @@ Process human-readable source text and output the original text semantically upd
   "Process human readable text of the :text or :inner string and return the semantically updated text based on the provided :sdata structure within ARGS, as defined by the MLEXPRESSION instance."
   (let ((htext (or (plist-get args :text)
                    (plist-get args :inner)))
+        (exregex (mrosetta-mlexpression-regex mlexpression))
         (exkey (car (plist-get args :sdata)))
         (exdata-is-set (cdr (plist-get args :sdata)))
         (exdata (copy-tree (cdr (plist-get args :sdata))))
-        (is-inner (plist-get args :inner))
-        (ilen-has-changed)
-        (inter-buffers '())
         (newtext)
         (case-fold-search nil))
     (when (and exdata
                (not (eq exkey
                         (or (mrosetta-mlexpression-key mlexpression) :nokey))))
       (error "Data structure error: Key mismatch"))
-    (or (when (and (mrosetta-mlexpression-is-contextual mlexpression) is-inner)
-          ;; Return the full inner-text matched within the parent expression or the updated text passed in
-          (or exdata htext))
-        (save-match-data
-          (and htext
-               (string-match (mrosetta-mlexpression-regex mlexpression) htext)
-               ;; Found metalanguage expression match
-               (let ((extext (match-string (mrosetta-mlexpression-regex-key mlexpression) htext))
-                     (pos '()))
-                 (save-match-data
-                   (while (or (and (string-match (mrosetta-mlexpression-rinstance mlexpression) extext (car pos))
-                                   ;; Handle plural expressions, including variations in length between updated and original sets
-                                   (or (not (mrosetta-mlexpression-is-plural mlexpression))
-                                       ;; Expression is plural, but check if there is any updated data to insert
-                                       (not exdata-is-set)
-                                       ;; Updated list data is set, but only continue if any updated instances are left
-                                       ;; Otherwise, just dispose of the remainder of the original
-                                       exdata)
-                                   ;; An instance matched within the original text, update pos and enter iteration
-                                   (push (match-end 0) pos))
-                              (and exdata
-                                   ;; No instances left within original text, but exdata still holding plural elements
-                                   (mrosetta-mlexpression-is-plural mlexpression)
-                                   ;; Reuse the last matched instance from the original text as a template
-                                   (string-match (mrosetta-mlexpression-rinstance mlexpression) extext (cadr pos))
-                                   ;; Mark as length mutation
-                                   (setq ilen-has-changed t)))
-                     ;; Update each instance
-                     (let ((instance-exdata (if (mrosetta-mlexpression-is-plural mlexpression) (pop exdata) exdata))
-                           (instance-newtext))
-                       (if (eq (mrosetta-mlexpression-extype mlexpression) :fractal)
-                           ;; Recursively update all fractals within
-                           (let ((fractals (mrosetta-mlexpression-fractals mlexpression)))
-                             (dolist (fractal fractals)
-                               (let* ((fractal-exdata (assq (mrosetta-mlexpression-key fractal) instance-exdata))
-                                      (fractal-text (match-string (mrosetta-mlexpression-regex-key fractal) extext))
-                                      (fractal-newtext (mrosetta-update fractal :inner fractal-text :sdata fractal-exdata)))
-                                 (setq instance-newtext (concat instance-newtext fractal-newtext)))))
-                         ;; Update end-elements
-                         (let ((left-buffer (match-string (mrosetta-mlexpression-left-rbuffer-key mlexpression) extext))
-                               (right-buffer (match-string (mrosetta-mlexpression-right-rbuffer-key mlexpression) extext)))
-                           (when (eq (mrosetta-mlexpression-extype mlexpression) :match)
-                             ;; Manage potential list length mutations
-                             (when (mrosetta-mlexpression-is-plural mlexpression)
-                               ;; Inject buffer in cases of list length mutations with no right buffer at previous element
-                               (when (and ilen-has-changed
-                                          (string-empty-p left-buffer)
-                                          (string-empty-p (car inter-buffers)))
-                                 (setq left-buffer (car (last inter-buffers))))
-                               ;; Persist inter-instance buffer
-                               (push right-buffer inter-buffers))
-                             ;; Update match text, including ignorable matches
-                             (let ((prefix (mrosetta-mlexpression-match-prefix mlexpression))
-                                   (suffix (mrosetta-mlexpression-match-suffix mlexpression))
-                                   (match (or instance-exdata
-                                              (match-string (mrosetta-mlexpression-rmatch-key mlexpression) extext))))
-                               (setq instance-newtext (concat left-buffer prefix match suffix right-buffer))))
-                           (when (eq (mrosetta-mlexpression-extype mlexpression) :literal)
-                             ;; Include the literal, with surrounding buffer
-                             (let ((literal (mrosetta-mlexpression-match-literal mlexpression)))
-                               (setq instance-newtext (concat left-buffer literal right-buffer))))))
-                       (setq newtext (concat newtext instance-newtext))))
-                   ;; Return the updated text
-                   newtext)))))))
+    (when (mrosetta-mlexpression-is-contextual mlexpression)
+      ;; Ensure complete matches of contextual expressions
+      (setq exregex (concat "^" exregex "$")))
+    (save-match-data
+      (and htext
+           (string-match exregex htext)
+           ;; Found metalanguage expression match
+           (let ((extext (match-string (mrosetta-mlexpression-regex-key mlexpression) htext))
+                 (pos '()))
+             (save-match-data
+               (while (or (and (string-match (mrosetta-mlexpression-rinstance mlexpression) extext (car pos))
+                               ;; Handle plural expressions, including variations in length between updated and original sets
+                               (or (not (mrosetta-mlexpression-is-plural mlexpression))
+                                   ;; Expression is plural, but check if there is any updated data to insert
+                                   (not exdata-is-set)
+                                   ;; Updated list data is set, but only continue if any updated instances are left
+                                   ;; Otherwise, just dispose of the remainder of the original
+                                   exdata)
+                               ;; An instance matched within the original text, update pos and enter iteration
+                               (push (match-end 0) pos))
+                          (and exdata
+                               ;; No instances left within original text, but exdata still holding additional elements
+                               (mrosetta-mlexpression-is-plural mlexpression)
+                               ;; Reuse the last matched instance from the original text as a template
+                               (string-match (mrosetta-mlexpression-rinstance mlexpression) extext (cadr pos))))
+                 ;; Update each instance
+                 (let ((instance-exdata (if (mrosetta-mlexpression-is-plural mlexpression) (pop exdata) exdata))
+                       (instance-newtext))
+                   (if (eq (mrosetta-mlexpression-extype mlexpression) :fractal)
+                       ;; Recursively update all fractals within
+                       (let ((fractals (mrosetta-mlexpression-fractals mlexpression)))
+                         (dolist (fractal fractals)
+                           (let* ((fractal-exdata (assq (mrosetta-mlexpression-key fractal) instance-exdata))
+                                  (fractal-text (match-string (mrosetta-mlexpression-regex-key fractal) extext))
+                                  (fractal-newtext (mrosetta-update fractal :inner fractal-text :sdata fractal-exdata)))
+                             (setq instance-newtext (concat instance-newtext fractal-newtext)))))
+                     ;; Update leaf elements
+                     (when (eq (mrosetta-mlexpression-extype mlexpression) :match)
+                       ;; Update match text, including ignorable matches
+                       (let ((buffer (match-string (mrosetta-mlexpression-rbuffer-key mlexpression) extext))
+                             (prefix (mrosetta-mlexpression-match-prefix mlexpression))
+                             (suffix (mrosetta-mlexpression-match-suffix mlexpression))
+                             (match (or instance-exdata
+                                        (match-string (mrosetta-mlexpression-rmatch-key mlexpression) extext))))
+                         (setq instance-newtext (concat buffer prefix match suffix))))
+                     (when (eq (mrosetta-mlexpression-extype mlexpression) :literal)
+                       ;; Just include the literal instance
+                       (setq instance-newtext (match-string (mrosetta-mlexpression-rinstance-key mlexpression) extext))))
+                   (setq newtext (concat newtext instance-newtext))))
+               ;; Return the updated text
+               newtext))))))
 #+END_SRC
 
 * Demos
