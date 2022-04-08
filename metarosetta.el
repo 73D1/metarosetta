@@ -17,6 +17,7 @@
 (require 'eieio)
 (require 'eieio-base)
 (require 'org)
+(require 'org-ml)
 
 (defclass mrosetta-keychain ()
   ((lastkey
@@ -436,11 +437,15 @@
   (let ((htext (or (plist-get args :text)
                    (plist-get args :inner)))
         (exregex (mrosetta-mlexpression-regex mlexpression))
+        (exrinstance (mrosetta-mlexpression-rinstance mlexpression))
         (exdata '())
         (case-fold-search nil))
     (when (mrosetta-mlexpression-is-contextual mlexpression)
       ;; Ensure complete matches of contextual expressions
-      (setq exregex (concat "^" exregex "$")))
+      (setq exregex (concat "^" exregex "$"))
+      (when (mrosetta-mlexpression-is-plural mlexpression)
+        (error "Metalanguage semantic error: Contextual expressions cannot be plural"))
+      (setq exrinstance (concat "^" exrinstance "$")))
     (save-match-data
       (and htext
            (string-match exregex htext)
@@ -449,7 +454,7 @@
                  (pos))
              (save-match-data
                ;; Iterate over all instance occurrences within the expression-matching text
-               (while (string-match (mrosetta-mlexpression-rinstance mlexpression) extext pos)
+               (while (string-match exrinstance extext pos)
                  (setq pos (match-end 0))
                  ;; Process the exact match as defined by the expression
                  (let ((instance-exdata))
@@ -458,7 +463,7 @@
                      ;; Recursively process all non-ignorable fractals within
                      (let ((fractals (mrosetta-mlexpression-fractals mlexpression)))
                        (dolist (fractal fractals)
-                         (when (not (mrosetta-mlexpression-should-ignore mlexpression))
+                         (when (not (mrosetta-mlexpression-should-ignore fractal))
                            (let ((fractal-exdata (mrosetta-process fractal :inner (match-string (mrosetta-mlexpression-regex-key fractal) extext))))
                              (when fractal-exdata
                                (setq instance-exdata `(,@instance-exdata ,fractal-exdata))))))))
@@ -484,6 +489,7 @@
   (let ((htext (or (plist-get args :text)
                    (plist-get args :inner)))
         (exregex (mrosetta-mlexpression-regex mlexpression))
+        (exrinstance (mrosetta-mlexpression-rinstance mlexpression))
         (exkey (car (plist-get args :sdata)))
         (exdata-is-set (cdr (plist-get args :sdata)))
         (exdata (copy-tree (cdr (plist-get args :sdata))))
@@ -495,7 +501,10 @@
       (error "Data structure error: Key mismatch"))
     (when (mrosetta-mlexpression-is-contextual mlexpression)
       ;; Ensure complete matches of contextual expressions
-      (setq exregex (concat "^" exregex "$")))
+      (setq exregex (concat "^" exregex "$"))
+      (when (mrosetta-mlexpression-is-plural mlexpression)
+        (error "Metalanguage semantic error: Contextual expressions cannot be plural"))
+      (setq exrinstance (concat "^" exrinstance "$")))
     (save-match-data
       (and htext
            (string-match exregex htext)
@@ -503,7 +512,7 @@
            (let ((extext (match-string (mrosetta-mlexpression-regex-key mlexpression) htext))
                  (pos '()))
              (save-match-data
-               (while (or (and (string-match (mrosetta-mlexpression-rinstance mlexpression) extext (car pos))
+               (while (or (and (string-match exrinstance extext (car pos))
                                ;; Handle plural expressions, including variations in length between updated and original sets
                                (or (not (mrosetta-mlexpression-is-plural mlexpression))
                                    ;; Expression is plural, but check if there is any updated data to insert
@@ -517,7 +526,7 @@
                                ;; No instances left within original text, but exdata still holding additional elements
                                (mrosetta-mlexpression-is-plural mlexpression)
                                ;; Reuse the last matched instance from the original text as a template
-                               (string-match (mrosetta-mlexpression-rinstance mlexpression) extext (cadr pos))))
+                               (string-match exrinstance extext (cadr pos))))
                  ;; Update each instance
                  (let ((instance-exdata (if (mrosetta-mlexpression-is-plural mlexpression) (pop exdata) exdata))
                        (instance-newtext))
@@ -544,6 +553,286 @@
                    (setq newtext (concat newtext instance-newtext))))
                ;; Return the updated text
                newtext))))))
+
+(defclass mrosetta-org-expression ()
+  ((mlexpression
+    :type mrosetta-mlexpression
+    :documentation "The actual metalanguage expression of the org expression object in context.")
+   (match-id-key
+    :type symbol
+    :documentation "The symbol of the expression key assigned to the unique identifier of the respective match.")
+   (match-type
+    :type symbol
+    :documentation "The symbol of the specific mrosetta-org-match subclass defining all the tracked matches within this expression object.")
+   (matches
+    :type list
+    :documentation "An id.match alist containing the org match objects corresponding to all the processed and tracked matches of the expression in context."))
+  "The Metarosetta org configuration object representing a specific metalanguage expression."
+  :abstract t)
+
+(defclass mrosetta-org-match ()
+  ((raw-match
+    :type string
+    :documentation "The full textual match in context.")
+   (parsed-match
+    :type list
+    :documentation "The parsed match structure, generated by processing the textual match through the metalanguage expression in context.")
+   (id
+    :type string
+    :documentation "The unique identifier of the match in context.")
+   (last-updated
+    :type string
+    :documentation "The human-readable string of a timestamp when the match in context was last updated.")
+   (op-type
+    :type symbol
+    :documentation "A keyword symbol specifying the type of the last operation done on the match in context. Can either be :created, :downloaded or :uploaded."))
+  "The Metarosetta org configuration object representing a single match of a given metalanguage expression."
+  :abstract t)
+
+(defclass mrosetta-org-expression-root (mrosetta-org-expression)
+  ((match-type
+    :initform 'mrosetta-org-match-original))
+  "The Metarosetta org configuration object representing the root metalanguage expression in context of its containing org file.")
+
+(defclass mrosetta-org-match-original (mrosetta-org-match)
+  ((source-filename
+    :type string
+    :documentation "The filename of the source file where the match in context originally resides."))
+  "The Metarosetta org configuration object representing a single original match of its defining root metalanguage expression.")
+
+(defclass mrosetta-org-expression-output (mrosetta-org-expression)
+  ((match-type
+    :initform 'mrosetta-org-match-output)
+   (target-type
+    :type symbol
+    :documentation "A symbol denoting the type of the target file where the match in context should be appended to.")
+   (target-filename-template
+    :type string
+    :documentation "The filename template of the target file where the match in context should be appended to. In addition to literal elements along the file path, $-prefixed expression key symbols can be used to interpolate processed expression elements into the path itself.")
+   (target-heading-key
+    :type (or null symbol)
+    :documentation "The symbol of the expression key assigned to the heading (or heading list) defining the section within the target file under which the match should reside.")
+   (template
+    :type string
+    :documentation "A string used as an output template based on which the expression in context will generate the output text itself."))
+  "The Metarosetta org configuration object representing an output expression in context of its containing org file.")
+
+(defclass mrosetta-org-match-output (mrosetta-org-match)
+  ((target-filename
+    :type string
+    :documentation "The literal filename of the target file where the match in context should be appended to.")
+   (target-heading
+    :type string
+    :documentation "The full heading path defining the section within the target file under which the match should reside."))
+  "The Metarosetta org configuration object representing an output match defined by its encompassing output expression.")
+
+(defclass mrosetta-org-config ()
+  ((root-expression
+    :type mrosetta-org-expression-root
+    :documentation "The root expression configuration object in context of the configuration set.")
+   (output-expressions
+    :type list
+    :documentation "A list of output expression configuration objects in context of the configuration set."))
+  "The Metarosetta org configuration object ")
+
+(cl-defmethod mrosetta-org-parse ((oexpression mrosetta-org-expression) oelement)
+  "Parse and compile the metalanguage expression, along with other properties, defined by the org-ml headline element OELEMENT into the OEXPRESSION instance. Recursively parse all match elements contained within OELEMENT."
+  ;; Parse the metalanguage expression
+  (let* ((mldefinition-string (car (org-ml-get-property :title oelement)))
+         (mldefinition (car (read-from-string (concat "(" mldefinition-string ")"))))
+         (mlexpression (mrosetta-mlexpression :mldefinition mldefinition)))
+    ;; Parse and compile the loaded metalanguage expression, so it's ready for textual processing
+    (mrosetta-parse mlexpression)
+    (mrosetta-compile mlexpression)
+    ;; Finally, store the initialized metalanguage expression into the configuration object
+    (setf (slot-value oexpression 'mlexpression) mlexpression))
+  ;; Parse the match ID key's symbol
+  (let* ((match-id-key-string (org-ml-headline-get-node-property "MATCH-ID-KEY" oelement))
+         (match-id-key (intern match-id-key-string)))
+    (setf (slot-value oexpression 'match-id-key) match-id-key))
+  ;; Recursively parse all tracked matches
+  (let ((match-type (slot-value oexpression 'match-type)))
+    (setf (slot-value oexpression 'matches)
+          (mapcar (lambda (match-oelement)
+                    (let ((omatch (mrosetta-org-parse (make-instance match-type) match-oelement)))
+                      `(,(slot-value omatch 'id) . ,omatch)))
+                  (org-ml-headline-get-subheadlines oelement))))
+  ;; Return the parsed object
+  oexpression)
+
+(cl-defmethod mrosetta-org-serialize ((oexpression mrosetta-org-expression))
+  "Serialize the OEXPRESSION into an org-ml headline element. Also, recursively serialize all the contained match objects."
+  (let* ((mlexpression (slot-value oexpression 'mlexpression))
+         (match-id-key (slot-value oexpression 'match-id-key))
+         (matches (slot-value oexpression 'matches))
+         (mldefinition (slot-value mlexpression 'mldefinition))
+         ;; Serialize the metalanguage definition in string form
+         (mldefinition-string (mapconcat 'prin1-to-string mldefinition " "))
+         ;; Serialize the match ID key's symbol in string form
+         (match-id-key-string (symbol-name match-id-key))
+         ;; Create the org-ml headline element with the serialized ml definition as title
+         (oelement (org-ml-build-headline :level 1 :title `(,mldefinition-string))))
+    ;; Append the match ID key within the headline element property drawer
+    (setq oelement (org-ml-headline-set-node-property "MATCH-ID-KEY" match-id-key-string oelement))
+    ;; Recursively serialize contained matches and set them as element subheadlines
+    (setq oelement (org-ml-headline-set-subheadlines (mapcar (lambda (match-pair)
+                                                               (let ((match (cdr match-pair)))
+                                                                 (mrosetta-org-serialize match)))
+                                                             matches)
+                                                     oelement))
+    ;; Return the serialized org-ml element
+    oelement))
+
+(cl-defmethod mrosetta-org-parse ((omatch mrosetta-org-match) oelement)
+  "Parse the textual match and its corresponding metadata defined by the org-ml headline element OELEMENT into the OMATCH instance."
+  ;; Parse the raw textual match
+  (let ((raw-match (car (org-ml-get-property :title oelement))))
+    (setf (slot-value omatch 'raw-match) raw-match))
+  ;; Parse the processed match structure from the contained source block
+  (let* ((source-block (car (org-ml-headline-get-section oelement)))
+         (parsed-match (car (read-from-string (org-ml-get-property :value source-block)))))
+    (setf (slot-value omatch 'parsed-match) parsed-match))
+  ;; Set the actual match identifier
+  (let ((id (org-ml-headline-get-node-property "ID" oelement)))
+    (setf (slot-value omatch 'id) id))
+  ;; Set the last updated metadata property
+  (let ((last-updated (org-ml-headline-get-node-property "LAST-UPDATED" oelement)))
+    (setf (slot-value omatch 'last-updated) last-updated))
+  ;; Set the operation type keyword in context of the last update
+  (let ((op-type (intern (org-ml-headline-get-node-property "OPERATION-TYPE" oelement))))
+    (setf (slot-value omatch 'op-type) op-type))
+  ;; Return the parsed object
+  omatch)
+
+(cl-defmethod mrosetta-org-serialize ((omatch mrosetta-org-match))
+  "Serialize the OMATCH into an org-ml headline element."
+  (let* ((raw-match (slot-value omatch 'raw-match))
+         (parsed-match (slot-value omatch 'parsed-match))
+         (id (slot-value omatch 'id))
+         (last-updated (slot-value omatch 'last-updated))
+         (op-type (slot-value omatch 'op-type))
+         ;; Create the org-ml headline element with the raw match as its title
+         (oelement (org-ml-build-headline :level 2 :title `(,raw-match)))
+         ;; Serialize the parsed match Lisp structure into an org source block
+         (source-block (org-ml-build-src-block :language "emacs-lisp"
+                                               :value (prin1-to-string parsed-match))))
+    ;; Append the identifier, last updated and operation type metadata properties within the headline element property drawer
+    (setq oelement (->> (org-ml-headline-set-node-property "ID" id oelement)
+                        (org-ml-headline-set-node-property "LAST-UPDATED" last-updated)
+                        (org-ml-headline-set-node-property "OPERATION-TYPE" (symbol-name op-type))))
+    ;; Set the serialized source block as the org element's inner section
+    (setq oelement (org-ml-headline-set-section `(,source-block) oelement))
+    ;; Return the serialized org-ml element
+    oelement))
+
+(cl-defmethod mrosetta-org-parse ((omatch mrosetta-org-match-original) oelement)
+  "Parse the textual original match and its corresponding metadata defined by the org-ml headline element OELEMENT into the OMATCH instance."
+  ;; Parse the base properties first
+  (cl-call-next-method)
+  ;; Parse the source filename where the original match is tracked from
+  (let ((source-filename (org-ml-headline-get-node-property "SOURCE-FILE" oelement)))
+    (setf (slot-value omatch 'source-filename) source-filename))
+  ;; Return the parsed object
+  omatch)
+
+(cl-defmethod mrosetta-org-serialize ((omatch mrosetta-org-match-original))
+  "Serialize the original match object OMATCH into an org-ml headline element."
+  (let ((source-filename (slot-value omatch 'source-filename))
+        ;; Serialize the base properties first
+        (oelement (cl-call-next-method)))
+    ;; Append the source filename within the headline element property drawer
+    (setq oelement (org-ml-headline-set-node-property "SOURCE-FILE" source-filename oelement))
+    ;; Return the serialized org-ml element
+    oelement))
+
+(cl-defmethod mrosetta-org-parse ((oexpression mrosetta-org-expression-output) oelement)
+  "Parse and compile the metalanguage expression, along with other output expression properties, defined by the org-ml headline element OELEMENT into the OEXPRESSION instance. Recursively parse all match output elements contained within OELEMENT."
+  ;; First parse the base expression properties, including the metalanguage expression as well as child matches
+  (cl-call-next-method)
+  ;; Parse the target type symbol, referencing the corresponding output connector
+  (let ((target-type (intern (org-ml-headline-get-node-property "TARGET-TYPE" oelement))))
+    (setf (slot-value oexpression 'target-type) target-type))
+  ;; Parse the target filename template
+  (let ((target-filename-template (org-ml-headline-get-node-property "TARGET-FILE-TEMPLATE" oelement)))
+    (setf (slot-value oexpression 'target-filename-template) target-filename-template))
+  ;; Parse the target heading key symbol, if defined, or nil otherwise
+  (let* ((target-heading-key-string (org-ml-headline-get-node-property "TARGET-HEADING-KEY" oelement))
+         (target-heading-key (when target-heading-key-string (intern target-heading-key-string))))
+    (setf (slot-value oexpression 'target-heading-key) target-heading-key))
+  ;; Parse the output template string
+  (let ((template (org-ml-headline-get-node-property "TEMPLATE" oelement)))
+    (setf (slot-value oexpression 'template) template))
+  ;; Return the parsed object
+  oexpression)
+
+(cl-defmethod mrosetta-org-serialize ((oexpression mrosetta-org-expression-output))
+  "Serialize the output OEXPRESSION into an org-ml headline element. Also, recursively serialize all the contained match objects."
+  (let ((target-type (slot-value oexpression 'target-type))
+        (target-filename-template (slot-value oexpression 'target-filename-template))
+        (target-heading-key (slot-value oexpression 'target-heading-key))
+        (template (slot-value oexpression 'template))
+        ;; Serialize the base properties first
+        (oelement (cl-call-next-method)))
+    ;; Append all the essential output expression properties within the headline element property drawer
+    (setq oelement (->> (org-ml-headline-set-node-property "TARGET-TYPE" (symbol-name target-type) oelement)
+                        (org-ml-headline-set-node-property "TARGET-FILE-TEMPLATE" target-filename-template)
+                        (org-ml-headline-set-node-property "TEMPLATE" template)))
+    ;; Append the target heading key property, if one is set
+    (when target-heading-key
+      (setq oelement (org-ml-headline-set-node-property "TARGET-HEADING-KEY" (symbol-name target-heading-key) oelement)))
+    ;; Return the serialized org-ml element
+    oelement))
+
+(cl-defmethod mrosetta-org-parse ((omatch mrosetta-org-match-output) oelement)
+  "Parse the textual output match and its corresponding metadata defined by the org-ml headline element OELEMENT into the OMATCH instance."
+  ;; Parse the base properties first
+  (cl-call-next-method)
+  ;; Parse the target filename where the output match is placed to
+  (let ((target-filename (org-ml-headline-get-node-property "TARGET-FILE" oelement)))
+    (setf (slot-value omatch 'target-filename) target-filename))
+  ;; Parse the target heading path defining the section within which the output match is placed
+  (let ((target-heading (org-ml-headline-get-node-property "TARGET-HEADING" oelement)))
+    (setf (slot-value omatch 'target-heading) target-heading))
+  ;; Return the parsed object
+  omatch)
+
+(cl-defmethod mrosetta-org-serialize ((omatch mrosetta-org-match-output))
+  "Serialize the output match object OMATCH into an org-ml headline element."
+  (let ((target-filename (slot-value omatch 'target-filename))
+        (target-heading (slot-value omatch 'target-heading))
+        ;; Serialize the base properties first
+        (oelement (cl-call-next-method)))
+    ;; Append the target filename as well as the heading path within the headline element property drawer
+    (setq oelement (->> (org-ml-headline-set-node-property "TARGET-FILE" target-filename oelement)
+                        (org-ml-headline-set-node-property "TARGET-HEADING" target-heading)))
+    ;; Return the serialized org-ml element
+    oelement))
+
+(cl-defmethod mrosetta-org-parse ((oconfig mrosetta-org-config) otree)
+  "Parse the configuration tree defined by the org-ml subtree OTREE into the OCONFIG instance."
+  ;; Parse the root and output expressions respectively
+  (let ((root-oelement (car otree))
+        (output-oelements (cdr otree)))
+    ;; Parse the single root expression object
+    (setf (slot-value oconfig 'root-expression)
+          (mrosetta-org-parse (mrosetta-org-expression-root) root-oelement))
+    ;; Parse and map all the output expression objects contained within the configuration tree
+    (setf (slot-value oconfig 'output-expressions)
+          (mapcar (lambda (output-oelement)
+                    (mrosetta-org-parse (mrosetta-org-expression-output) output-oelement))
+                  output-oelements)))
+  ;; Return the parsed object
+  oconfig)
+
+(cl-defmethod mrosetta-org-serialize ((oconfig mrosetta-org-config))
+  "Serialize the configuration set object OCONFIG into a corresponding org-ml subtree."
+  (let ((root-expression (slot-value oconfig 'root-expression))
+        (output-expressions (slot-value oconfig 'output-expressions)))
+    ;; Return the serialized org-ml subtree
+    `(,(mrosetta-org-serialize root-expression)
+      ,@(mapcar (lambda (output-expression)
+                  (mrosetta-org-serialize output-expression))
+                output-expressions))))
 
 (provide 'metarosetta)
 
