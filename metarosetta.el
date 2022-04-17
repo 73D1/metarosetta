@@ -863,52 +863,48 @@
   "A Metarosetta output connector object which serves as an agnostic base for various output file connectors dealing with structured text, such as Markdown or org-mode.")
 
 (cl-defmethod mrosetta-out-to-structured-text-goto-section ((connector mrosetta-out-to-structured-text) section)
-  "The structured text output CONNECTOR's helper method to forward the point to the beginning of the target section defined by the SECTION path within the context of the current buffer."
+  "The structured text output CONNECTOR's helper method to set the point, in context of the current buffer, to the beginning of the target section defined by the SECTION path. Return a cons cell containing the starting and ending points, respectively."
   (let ((heading-mark (slot-value connector 'heading-mark))
+        section-heading-mark
         (headings (split-string section "/")))
     ;; Assuming the context of a current buffer, start search from the beginning
     (goto-char (point-min))
-    ;; Navigate to targeted section and return
-    (cl-reduce (lambda (result heading)
-                 ;; Compile the current heading mark, based on heading depth
-                 (let* ((current-heading-mark (concat (car result) heading-mark))
-                        (full-heading (concat current-heading-mark " " heading)))
-                   ;; All sections along the path are expected to be in place, i.e. none are implicitly created
-                   (search-forward full-heading)
-                   ;; Return the current heading mark and heading
-                   `(,current-heading-mark . ,heading)))
-               headings
-               :initial-value '("" . ""))))
-
-(defun mrosetta-out-to-structured-text-section-end-position (section-heading)
-  "The structured text output helper function to get the end position of the section, defined by SECTION-HEADING, at point in context of the current buffer."
-  (let ((section-heading-mark (car section-heading)))
-    ;; Recursively get the end position of the encompassing section
-    (cl-labels ((section-end-position (current-section-heading-mark)
-                                      (when (> (length current-section-heading-mark) 0)
-                                        (save-excursion
-                                          (let ((parent-end-position (section-end-position (substring current-section-heading-mark 0 -1))))
-                                            (or (search-forward current-section-heading-mark
-                                                                parent-end-position
-                                                                t)
-                                                parent-end-position))))))
-      (section-end-position section-heading-mark))))
+    ;; Navigate to targeted section and get the section's heading mark
+    (setq section-heading-mark
+          (cl-reduce (lambda (last-heading-mark heading)
+                       ;; Compile the current heading mark, based on heading depth
+                       (let* ((current-heading-mark (concat last-heading-mark heading-mark))
+                              (full-heading (concat current-heading-mark " " heading)))
+                         ;; All sections along the path are expected to be in place, i.e. none are implicitly created
+                         (search-forward full-heading)
+                         ;; Push the current heading mark to the next iteration
+                         current-heading-mark))
+                     headings
+                     :initial-value ""))
+    ;; Recursively get the end position of the section at point, and return both points
+    `(,(point) . ,(cl-labels ((section-end-position (current-heading-mark)
+                                                    (when (> (length current-heading-mark) 0)
+                                                      (save-excursion
+                                                        (let ((parent-end-position (section-end-position (substring current-heading-mark 0 -1))))
+                                                          (or (search-forward current-heading-mark
+                                                                              parent-end-position
+                                                                              t)
+                                                              parent-end-position))))))
+                    (section-end-position section-heading-mark)))))
 
 (cl-defmethod mrosetta-out-add ((connector mrosetta-out-to-structured-text) endpoint section output-match)
   "Via the structured text output CONNECTOR, append the OUTPUT-MATCH to the ENDPOINT file within the specified SECTION."
-  (let* (section-heading
-         section-end
+  (let* (section-bounds
          (item-mark (slot-value connector 'item-mark))
          (full-item (concat item-mark " " output-match)))
     (with-temp-file endpoint
       (insert-file-contents endpoint)
-      ;; Navigate to section in context
-      (setq section-heading (mrosetta-out-to-structured-text-goto-section connector section)
-            section-end (mrosetta-out-to-structured-text-section-end-position section-heading))
+      ;; Navigate to section in context, and get section bounds
+      (setq section-bounds (mrosetta-out-to-structured-text-goto-section connector section))
       ;; Navigate to the end of the list within the target section
       (while (search-forward item-mark
                              ;; Limit the search to the encompassing section only
-                             section-end
+                             (cdr section-bounds)
                              ;; When search eventually fails, just return nil and exit the loop
                              t))
       ;; Insert the new list item after the last one
@@ -920,18 +916,16 @@
 
 (cl-defmethod mrosetta-out-read ((connector mrosetta-out-to-structured-text) endpoint section match-id)
   "Via the structured text output CONNECTOR, read an output match defined by the provided MATCH-ID from within the SECTION of the provided ENDPOINT file."
-  (let (section-heading
-        section-end
+  (let (section-bounds
         (item-mark (slot-value connector 'item-mark)))
     (with-temp-buffer
       (insert-file-contents endpoint)
-      ;; Navigate to section in context
-      (setq section-heading (mrosetta-out-to-structured-text-goto-section connector section)
-            section-end (mrosetta-out-to-structured-text-section-end-position section-heading))
+      ;; Navigate to section in context, and get section bounds
+      (setq section-bounds (mrosetta-out-to-structured-text-goto-section connector section))
       ;; Search for the item line containing the match ID
       (search-forward match-id
                       ;; Limit the search to the encompassing section only
-                      section-end)
+                      (cdr section-bounds))
       ;; Set point at the beginning of the item's line
       (beginning-of-line)
       ;; Return the match in context, excluding the item mark
@@ -940,18 +934,16 @@
 
 (cl-defmethod mrosetta-out-update ((connector mrosetta-out-to-structured-text) endpoint section match-id output-match)
   "Via the structured text output CONNECTOR, update the OUTPUT-MATCH defined by the provided MATCH-ID located in the specified ENDPOINT within a specific SECTION."
-  (let (section-heading
-        section-end
+  (let (section-bounds
         (item-mark (slot-value connector 'item-mark)))
     (with-temp-file endpoint
       (insert-file-contents endpoint)
-      ;; Navigate to section in context
-      (setq section-heading (mrosetta-out-to-structured-text-goto-section connector section)
-            section-end (mrosetta-out-to-structured-text-section-end-position section-heading))
+      ;; Navigate to section in context, and get section bounds
+      (setq section-bounds (mrosetta-out-to-structured-text-goto-section connector section))
       ;; Search for the item line containing the match ID
       (search-forward match-id
                       ;; Limit the search to the encompassing section only
-                      section-end)
+                      (cdr section-bounds))
       ;; Set point at the beginning of the item's line
       (beginning-of-line)
       ;; Move past the item mark
