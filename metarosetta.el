@@ -838,7 +838,8 @@
   ((syntax-type
     :initarg :syntax-type
     :type symbol
-    :documentation "A symbol defining the syntax type the output connector in context conforms to."))
+    :documentation "A symbol defining the syntax type the output connector in context conforms to."
+    :reader mrosetta-out-syntax-type))
   "The foundational output connector object all Metarosetta connectors should extend on."
   :abstract t)
 
@@ -954,6 +955,61 @@
       (insert output-match))
     ;; Return affirmatively
     t))
+
+(defvar mrosetta-configuration-directory nil
+  "Metarosetta's active configuration directory.")
+
+(defvar mrosetta-index-connectors (make-hash-table :test 'eq)
+  "Metarosetta's global index of registered output connectors by the target syntax type symbol.")
+
+(defvar mrosetta-index-configurations (make-hash-table :test 'equal)
+  "Metarosetta's global index of loaded configurations by their respective file names.")
+
+(defvar mrosetta-index-matches (make-hash-table :test 'equal :weakness 'value)
+  "Metarosetta's global index on all the tracked matches corresponding to their respective configuration org files.")
+
+(defvar mrosetta-index-sources (make-hash-table :test 'equal)
+  "Metarosetta's global reverse index of all the tracked matches by their original source file name.")
+
+(defun mrosetta-register-connectors (&rest connectors)
+  "Register one or more Metarosetta output CONNECTORS."
+  (dolist (connector connectors)
+    ;; Check if the connector is of the proper class
+    (when (not (object-of-class-p connector 'mrosetta-out))
+      (error "Invalid output connector error: All output connectors must inherit from the mrosetta-out class"))
+    ;; Index each of the provided connectors
+    (puthash (mrosetta-out-syntax-type connector) connector mrosetta-index-connectors)))
+
+(defun mrosetta-load (configuration-directory)
+  "Load all the Metarosetta org configuration files located within the provided CONFIGURATION-DIRECTORY."
+  ;; First set the configuration directory
+  (setq mrosetta-configuration-directory configuration-directory)
+  ;; Load, parse and initialize all Metarosetta configurations
+  (let ((configuration-files (cl-remove-if-not (lambda (filename)
+                                                 (eq (file-name-extension filename) "org"))
+                                               (directory-files configuration-directory))))
+    ;; Parse all configuration files and add them to the global index
+    (dolist (configuration-file configuration-files)
+      (puthash configuration-file
+               (with-temp-buffer
+                 (insert-file-contents configuration-file)
+                 (mrosetta-org-parse (mrosetta-org-config) (org-ml-parse-subtrees 'all)))
+               mrosetta-index-configurations))))
+
+(defun mrosetta-save ()
+  "Save all the indexed Metarosetta org configuration files to the set configuration directory."
+  ;; Save each configuration
+  (maphash (lambda (config-file oconfig)
+             (with-temp-file config-file
+               (insert-file-contents config-file)
+               ;; Skip over any non-heading data
+               (goto-char (point-min))
+               (re-search-forward "^*")
+               (goto-char (1- (point)))
+               (delete-region (point) (point-max))
+               ;; Insert the serialized org data
+               (insert (org-ml-to-string (mrosetta-org-serialize oconfig)))))
+           mrosetta-index-configurations))
 
 (provide 'metarosetta)
 
