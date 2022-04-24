@@ -432,13 +432,11 @@
           (slot-value mlexpression 'regex-key) regex-key
           (slot-value mlexpression 'regex) regex)))
 
-(cl-defmethod mrosetta-process ((mlexpression mrosetta-mlexpression) &rest args)
-  "Process human-readable text of the :text or :inner string within ARGS and return the semantically-significant data structure as defined by the MLEXPRESSION instance."
+(cl-defmethod mrosetta-process ((mlexpression mrosetta-mlexpression) htext)
+  "Process human-readable text HTEXT and return the semantically-significant data structure as defined by the MLEXPRESSION instance."
   (when (mrosetta-mlexpression-should-ignore mlexpression)
     (error "Metalanguage semantic error: Root expressions cannot be ignorable"))
-  (let ((htext (or (plist-get args :text)
-                   (plist-get args :inner)))
-        (exregex (mrosetta-mlexpression-regex mlexpression))
+  (let ((exregex (mrosetta-mlexpression-regex mlexpression))
         (exrinstance (mrosetta-mlexpression-rinstance mlexpression))
         (exdata '())
         (case-fold-search nil))
@@ -466,7 +464,7 @@
                      (let ((fractals (mrosetta-mlexpression-fractals mlexpression)))
                        (dolist (fractal fractals)
                          (when (not (mrosetta-mlexpression-should-ignore fractal))
-                           (let ((fractal-exdata (mrosetta-process fractal :inner (match-string (mrosetta-mlexpression-regex-key fractal) extext))))
+                           (let ((fractal-exdata (mrosetta-process fractal (match-string (mrosetta-mlexpression-regex-key fractal) extext))))
                              (when fractal-exdata
                                (setq instance-exdata `(,@instance-exdata ,fractal-exdata))))))))
                    ;; Cases where the expression is a :match
@@ -486,15 +484,13 @@
                  ;; Return the structured data object
                  `(,(or (mrosetta-mlexpression-key mlexpression) :nokey) . ,exdata))))))))
 
-(cl-defmethod mrosetta-update ((mlexpression mrosetta-mlexpression) &rest args)
-  "Process human readable text of the :text or :inner string and return the semantically updated text based on the provided :sdata structure within ARGS, as defined by the MLEXPRESSION instance."
-  (let ((htext (or (plist-get args :text)
-                   (plist-get args :inner)))
-        (exregex (mrosetta-mlexpression-regex mlexpression))
+(cl-defmethod mrosetta-update ((mlexpression mrosetta-mlexpression) htext sdata)
+  "Process human readable text HTEXT and return the semantically updated text based on the provided SDATA structure, as defined by the MLEXPRESSION instance."
+  (let ((exregex (mrosetta-mlexpression-regex mlexpression))
         (exrinstance (mrosetta-mlexpression-rinstance mlexpression))
-        (exkey (car (plist-get args :sdata)))
-        (exdata-is-set (cdr (plist-get args :sdata)))
-        (exdata (copy-tree (cdr (plist-get args :sdata))))
+        (exkey (car sdata))
+        (exdata-is-set (cdr sdata))
+        (exdata (copy-tree (cdr sdata)))
         (newtext)
         (case-fold-search nil))
     (when (and exdata
@@ -538,7 +534,7 @@
                          (dolist (fractal fractals)
                            (let* ((fractal-exdata (assq (mrosetta-mlexpression-key fractal) instance-exdata))
                                   (fractal-text (match-string (mrosetta-mlexpression-regex-key fractal) extext))
-                                  (fractal-newtext (mrosetta-update fractal :inner fractal-text :sdata fractal-exdata)))
+                                  (fractal-newtext (mrosetta-update fractal fractal-text fractal-exdata)))
                              (setq instance-newtext (concat instance-newtext fractal-newtext)))))
                      ;; Update leaf elements
                      (when (eq (mrosetta-mlexpression-extype mlexpression) :match)
@@ -555,6 +551,21 @@
                    (setq newtext (concat newtext instance-newtext))))
                ;; Return the updated text
                newtext))))))
+
+(defvar mrosetta-configuration-directory nil
+  "Metarosetta's active configuration directory.")
+
+(defvar mrosetta-index-connectors '()
+  "Metarosetta's global index of registered output connectors by the target syntax type symbol.")
+
+(defvar mrosetta-index-configurations '()
+  "Metarosetta's global index of loaded configurations by their respective file names.")
+
+(defvar mrosetta-index-matches (make-hash-table :test 'equal :weakness 'value)
+  "Metarosetta's global index on all the tracked matches corresponding to their respective configuration org files.")
+
+(defvar mrosetta-index-sources (make-hash-table :test 'equal)
+  "Metarosetta's global reverse index of all the tracked matches by their original source file name.")
 
 (defclass mrosetta-org-expression ()
   ((mlexpression
@@ -574,19 +585,25 @@
 
 (defclass mrosetta-org-match ()
   ((raw-match
+    :initarg :raw-match
     :type string
     :documentation "The full textual match in context.")
    (parsed-match
+    :initarg :parsed-match
     :type list
-    :documentation "The parsed match structure, generated by processing the textual match through the metalanguage expression in context.")
+    :documentation "The parsed match structure, generated by processing the textual match through the metalanguage expression in context."
+    :reader mrosetta-org-match-parsed)
    (id
-    :type string
-    :documentation "The unique identifier of the match in context."
+    :initarg :id
+    :type symbol
+    :documentation "The unique identifier symbol of the match in context."
     :reader mrosetta-org-match-id)
    (last-updated
+    :initarg :last-updated
     :type string
     :documentation "The human-readable string of a timestamp when the match in context was last updated.")
    (op-type
+    :initarg :op-type
     :type symbol
     :documentation "A keyword symbol specifying the type of the last operation done on the match in context. Can either be :created, :downloaded or :uploaded."))
   "The Metarosetta org configuration object representing a single match of a given metalanguage expression."
@@ -599,6 +616,7 @@
 
 (defclass mrosetta-org-match-original (mrosetta-org-match)
   ((source-filename
+    :initarg :source-filename
     :type string
     :documentation "The filename of the source file where the match in context originally resides."))
   "The Metarosetta org configuration object representing a single original match of its defining root metalanguage expression.")
@@ -622,9 +640,11 @@
 
 (defclass mrosetta-org-match-output (mrosetta-org-match)
   ((target-endpoint
+    :initarg :target-endpoint
     :type string
     :documentation "The literal filename, or URI, of the target where the match in context should be appended to, or sent to.")
    (target-section
+    :initarg :target-section
     :type string
     :documentation "The full section path defining the exact section within the target under which the match should reside or be sent to."))
   "The Metarosetta org configuration object representing an output match defined by its encompassing output expression.")
@@ -696,7 +716,7 @@
          (parsed-match (car (read-from-string (org-ml-get-property :value source-block)))))
     (setf (slot-value omatch 'parsed-match) parsed-match))
   ;; Set the actual match identifier
-  (let ((id (org-ml-headline-get-node-property "ID" oelement)))
+  (let ((id (intern (org-ml-headline-get-node-property "ID" oelement))))
     (setf (slot-value omatch 'id) id))
   ;; Set the last updated metadata property
   (let ((last-updated (org-ml-headline-get-node-property "LAST-UPDATED" oelement)))
@@ -720,7 +740,7 @@
          (source-block (org-ml-build-src-block :language "emacs-lisp"
                                                :value (prin1-to-string parsed-match))))
     ;; Append the identifier, last updated and operation type metadata properties within the headline element property drawer
-    (setq oelement (->> (org-ml-headline-set-node-property "ID" id oelement)
+    (setq oelement (->> (org-ml-headline-set-node-property "ID" (symbol-name id) oelement)
                         (org-ml-headline-set-node-property "LAST-UPDATED" last-updated)
                         (org-ml-headline-set-node-property "OPERATION-TYPE" (symbol-name op-type))))
     ;; Set the serialized source block as the org element's inner section
@@ -833,6 +853,110 @@
       ,@(mapcar (lambda (output-expression)
                   (mrosetta-org-serialize output-expression))
                 output-expressions))))
+
+(cl-defmethod mrosetta-org-expression-root-add ((oexpression mrosetta-org-expression-root) htext source-filename)
+  "Match the HTEXT from SOURCE-FILENAME against the metalanguage expression in context of the provided OEXPRESSION Metarosetta configuration object. If successful, add the new match into configuration and return it. Otherwise return nil."
+  (let* ((mlexpression (slot-value oexpression 'mlexpression))
+         (match-id-key (slot-value oexpression 'match-id-key))
+         (new-parsed-match (mrosetta-process mlexpression htext))
+         ;; The match ID is expected by convention to be at the first level of the parsed object's structure, right under its root key
+         (new-match-id-string (when new-parsed-match
+                                (cdr (assq match-id-key (cdr new-parsed-match)))))
+         (new-match-id (when new-match-id-string
+                         (intern new-match-id-string)))
+         new-match)
+    ;; Proceed only if match correctly processed
+    (when new-match-id
+      ;; Create the new match configuration object and add it to the top of the matches association list
+      (setq new-match (mrosetta-org-match-original :raw-match htext
+                                                   :parsed-match new-parsed-match
+                                                   :id new-match-id
+                                                   :last-updated (current-time-string)
+                                                   :op-type :created
+                                                   :source-filename source-filename))
+      (push `(,new-match-id . ,new-match)
+            (slot-value oexpression 'matches))
+      ;; Return the newly added match
+      new-match)))
+
+(cl-defmethod mrosetta-org-expression-output-add ((oexpression mrosetta-org-expression-output) sdata)
+  "Based on the provided structured semantic data SDATA, generate a new output match by interpolating the data into the template in context of the OEXPRESSION Metarosetta configuration object. If the data is compatible, add the match into configuration and return it. Otherwise return nil."
+  (let* ((mlexpression (slot-value oexpression 'mlexpression))
+         (match-id-key (slot-value oexpression 'match-id-key))
+         (new-match-id-string (cdr (assq match-id-key (cdr sdata))))
+         (new-match-id (when new-match-id-string
+                         (intern new-match-id-string)))
+         (target-type (slot-value oexpression 'target-type))
+         (connector (cdr (assq target-type mrosetta-index-connectors)))
+         (target-endpoint-template (slot-value oexpression 'target-endpoint-template))
+         (target-endpoint "")
+         (target-section-template (slot-value oexpression 'target-section-template))
+         (target-section "")
+         (template (slot-value oexpression 'template))
+         new-raw-match
+         new-parsed-match
+         new-match)
+    ;; Proceed only if a valid match id exists
+    (when new-match-id
+      ;; Interpolate data into endpoint and section templates
+      (cl-labels ((interpolate-into-path (path)
+                                         (when (and path
+                                                    (> (length path) 0))
+                                           ;; Use regular expression to split the path between static and dynamic parts
+                                           (save-match-data
+                                             (or (when (string-match "\\(?1:\\(?:/?[[:word:]]+\\)*\\)\\(?2:/\\)?\\$\\(?3:[[:word:]]+\\)\\(?4:.*\\)" path)
+                                                   ;; Replace the path element's key symbol with the corresponding data value
+                                                   (let* ((static-path (match-string 1 path))
+                                                          (path-element-separator (match-string 2 path))
+                                                          (path-element-key (intern (match-string 3 path)))
+                                                          (path-element (cdr (assq path-element-key (cdr sdata))))
+                                                          (rest-of-path (match-string 4 path)))
+                                                     ;; If path element is a list, convert it to path
+                                                     (when (listp path-element)
+                                                       (setq path-element (string-join path-element "/")))
+                                                     ;; Recursively parse through all path element key symbols
+                                                     (concat static-path
+                                                             path-element-separator path-element
+                                                             (interpolate-into-path rest-of-path))))
+                                                 ;; No dynamic path elements left
+                                                 path)))))
+        (setq target-endpoint (interpolate-into-path target-endpoint-template)
+              target-section (interpolate-into-path target-section-template)))
+      ;; Generate the new raw match from template
+      (setq new-raw-match (mrosetta-update mlexpression template sdata))
+      ;; Parse the complete structured data the newly generated raw match
+      (setq new-parsed-match (mrosetta-process mlexpression new-raw-match))
+      ;; Create new match configuration object and add it to the top of the matches association list
+      (setq new-match (mrosetta-org-match-output :raw-match new-raw-match
+                                                 :parsed-match new-parsed-match
+                                                 :id new-match-id
+                                                 :last-updated (current-time-string)
+                                                 :op-type :created
+                                                 :target-endpoint target-endpoint
+                                                 :target-section target-section))
+      (push `(,new-match-id . ,new-match)
+            (slot-value oexpression 'matches))
+      ;; Push out the new output through the connector
+      (mrosetta-out-add connector
+                        target-endpoint target-section
+                        new-raw-match)
+      ;; Return the newly added match
+      new-match)))
+
+(cl-defmethod mrosetta-org-config-add ((oconfig mrosetta-org-config) htext source-filename)
+  "Try to add the HTEXT from SOURCE-FILENAME into the OCONFIG Metarosetta org configuration. If it is successfully added, return the newly added original match. Otherwise return nil."
+  (let* ((root-oexpression (slot-value oconfig 'root-expression))
+         (output-oexpressions (slot-value oconfig 'output-expressions))
+         (added-match (mrosetta-org-expression-root-add root-oexpression htext source-filename)))
+    ;; Proceed only if match successfully added to root configuration object
+    (when added-match
+      (let ((added-match-sdata (mrosetta-org-match-parsed added-match)))
+        ;; Add the processed structured data of the new match to all the output expression configurations
+        (mapc (lambda (output-oexpression)
+                (mrosetta-org-expression-output-add output-oexpression added-match-sdata))
+              output-oexpressions))
+      ;; Return the newly added original match
+      added-match)))
 
 (defclass mrosetta-out ()
   ((syntax-type
@@ -956,29 +1080,16 @@
     ;; Return affirmatively
     t))
 
-(defvar mrosetta-configuration-directory nil
-  "Metarosetta's active configuration directory.")
-
-(defvar mrosetta-index-connectors (make-hash-table :test 'eq)
-  "Metarosetta's global index of registered output connectors by the target syntax type symbol.")
-
-(defvar mrosetta-index-configurations (make-hash-table :test 'equal)
-  "Metarosetta's global index of loaded configurations by their respective file names.")
-
-(defvar mrosetta-index-matches (make-hash-table :test 'equal :weakness 'value)
-  "Metarosetta's global index on all the tracked matches corresponding to their respective configuration org files.")
-
-(defvar mrosetta-index-sources (make-hash-table :test 'equal)
-  "Metarosetta's global reverse index of all the tracked matches by their original source file name.")
-
 (defun mrosetta-register-connectors (&rest connectors)
   "Register one or more Metarosetta output CONNECTORS."
-  (dolist (connector connectors)
-    ;; Check if the connector is of the proper class
-    (when (not (object-of-class-p connector 'mrosetta-out))
-      (error "Invalid output connector error: All output connectors must inherit from the mrosetta-out class"))
-    ;; Index each of the provided connectors
-    (puthash (mrosetta-out-syntax-type connector) connector mrosetta-index-connectors)))
+  (setq mrosetta-index-connectors
+        (mapcar (lambda (connector)
+                  ;; Check if the connector is of the proper class
+                  (when (not (object-of-class-p connector 'mrosetta-out))
+                    (error "Invalid output connector error: All output connectors must inherit from the mrosetta-out class"))
+                  ;; Create an alist element for the connector indexed by its type symbol
+                  `(,(mrosetta-out-syntax-type connector) . ,connector))
+                connectors)))
 
 (defun mrosetta-load (configuration-directory)
   "Load all the Metarosetta org configuration files located within the provided CONFIGURATION-DIRECTORY."
@@ -989,27 +1100,33 @@
                                                  (eq (file-name-extension filename) "org"))
                                                (directory-files configuration-directory))))
     ;; Parse all configuration files and add them to the global index
-    (dolist (configuration-file configuration-files)
-      (puthash configuration-file
-               (with-temp-buffer
-                 (insert-file-contents configuration-file)
-                 (mrosetta-org-parse (mrosetta-org-config) (org-ml-parse-subtrees 'all)))
-               mrosetta-index-configurations))))
+    (setq mrosetta-index-configurations
+          (mapcar (lambda (configuration-file)
+                    (with-temp-buffer
+                      (insert-file-contents configuration-file)
+                      `(,configuration-file . ,(mrosetta-org-parse (mrosetta-org-config) (org-ml-parse-subtrees 'all)))))
+                  configuration-files))))
 
 (defun mrosetta-save ()
   "Save all the indexed Metarosetta org configuration files to the set configuration directory."
   ;; Save each configuration
-  (maphash (lambda (config-file oconfig)
-             (with-temp-file config-file
-               (insert-file-contents config-file)
-               ;; Skip over any non-heading data
-               (goto-char (point-min))
-               (re-search-forward "^*")
-               (goto-char (1- (point)))
-               (delete-region (point) (point-max))
-               ;; Insert the serialized org data
-               (insert (org-ml-to-string (mrosetta-org-serialize oconfig)))))
-           mrosetta-index-configurations))
+  (mapc (lambda (configuration-pair)
+          (let ((configuration-file (car configuration-pair))
+                (configuration (cdr configuration-pair)))
+            (with-temp-file configuration-file
+              (insert-file-contents configuration-file)
+              ;; Skip over any non-heading data
+              (goto-char (point-min))
+              (re-search-forward "^*")
+              (goto-char (1- (point)))
+              ;; Delete any currently saved configuration data
+              (delete-region (point) (point-max))
+              ;; Insert the serialized org data
+              (insert (org-ml-to-string (mrosetta-org-serialize configuration))))))
+        mrosetta-index-configurations))
+
+(defun mrosetta-match ()
+  "Try to add the text from line at point to any compatible Metarosetta configuration currently active and tracking.")
 
 (provide 'metarosetta)
 
