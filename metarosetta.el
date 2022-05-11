@@ -997,8 +997,9 @@
         (output-expressions (slot-value oconfig 'output-expressions)))
     ;; Return the serialized org-ml subtree
     `(,(mrosetta-org-serialize root-expression)
-      ,@(mapcar (lambda (output-expression)
-                  (mrosetta-org-serialize output-expression))
+      ,@(mapcar (lambda (output-expression-pair)
+                  (let ((output-expression (cdr output-expression-pair)))
+                    (mrosetta-org-serialize output-expression)))
                 output-expressions))))
 
 (cl-defmethod mrosetta-org-expression-root-add ((oexpression mrosetta-org-expression-root) raw-match-candidate source-filename)
