@@ -590,6 +590,27 @@
             "\\)?"
             "\\" right-delimiter)))
 
+(defun mrosetta-id-parse-match-identifier (match-identifier)
+  "Parse the MATCH-IDENTIFIER and return a property list containing the root metalanguage expression key under :root-key, match serial key under :match-serial and the optional output expression key under :output-key. Given an invalid match, return nil."
+  (save-match-data
+    (and match-identifier
+         (string-match (concat "^"
+                               (mrosetta-id-generate-re :root-gkey 1
+                                                        :match-gkey 2
+                                                        :output-gkey 3)
+                               "$")
+                       match-identifier)
+         ;; Provided match identifier is of valid format
+         (let* ((root-key (intern (match-string 1 match-identifier)))
+                (match-serial (string-to-number (match-string 2 match-identifier)))
+                (output-key-string (match-string 3 match-identifier))
+                (output-key (when output-key-string
+                              (intern output-key-string))))
+           ;; Return the parsed identifier
+           `(:root-key ,root-key
+             :match-serial ,match-serial
+             :output-key ,output-key)))))
+
 (defun mrosetta-id-parse-match (full-match)
   "Parse the match identifier portion of the FULL-MATCH, and return a property list containing the root metalanguage expression key under :root-key, match serial key under :match-serial and the optional output expression key under :output-key, and lastly the core match under :core-match. Given an invalid match, return nil."
   (let ((full-match-regex (concat "^"
@@ -711,8 +732,17 @@
   ((source-filename
     :initarg :source-filename
     :type string
-    :documentation "The filename of the source file where the match in context originally resides."))
+    :documentation "The filename of the source file where the match in context originally resides."
+    :reader mrosetta-org-match-original-source-filename))
   "The Metarosetta org configuration object representing a single original match of its defining root metalanguage expression.")
+
+(cl-defmethod mrosetta-org-expression-root-match-source-filename ((oexpression mrosetta-org-expression-root) match-serial)
+  "Given the provided MATCH-SERIAL key, return the source filename of the corresponding original match in context of the OEXPRESSION Metarosetta root expression configuration object. If no such match exists, return nil."
+  (let ((match (cdr (assq match-serial
+                          (slot-value oexpression 'matches)))))
+    ;; Return source filename if match found
+    (when match
+      (mrosetta-org-match-original-source-filename match))))
 
 (defclass mrosetta-org-expression-output (mrosetta-org-expression)
   ((match-type
@@ -766,6 +796,10 @@
 (cl-defmethod mrosetta-org-config-key ((oconfig mrosetta-org-config))
   "Return the unique key symbol defining the OCONFIG Metarosetta org configuration object."
   (mrosetta-org-expression-key (slot-value oconfig 'root-expression)))
+
+(cl-defmethod mrosetta-org-config-original-match-source-filename ((oconfig mrosetta-org-config) match-serial)
+  "Given the provided MATCH-SERIAL key, return the source filename of the corresponding original match in context of the root expression within the OCONFIG Metarosetta configuration set object. If no such match exists, return nil."
+  (mrosetta-org-expression-root-match-source-filename (slot-value oconfig 'root-expression) match-serial))
 
 (cl-defmethod mrosetta-org-parse ((oexpression mrosetta-org-expression) oelement)
   "Parse and compile the metalanguage expression, along with other properties, defined by the org-ml headline element OELEMENT into the OEXPRESSION instance. Recursively parse all match elements contained within OELEMENT."
@@ -1509,7 +1543,101 @@
         mrosetta-index-configurations))
 
 (defun mrosetta-match ()
-  "Try to add the text from line at point to any compatible Metarosetta configuration currently active and tracking.")
+  "Try to add the text from line at point to any compatible Metarosetta configuration currently active and tracking."
+  (let ((source-filename (buffer-file-name)))
+    ;; If the current buffer is visiting a valid file, grab the current line's text to match
+    (when source-filename
+      (let ((text-to-match (string-trim (buffer-substring (line-beginning-position) (line-end-position)))))
+        ;; Only proceed if there's text to actually process
+        (when (> (length text-to-match) 0)
+          (let ((configurations mrosetta-index-configurations))
+            ;; Iterate over all indexed configurations until one matches
+            (while (and configurations
+                        (not (let* ((configuration (cdar configurations))
+                                    ;; Try to match the current configuration
+                                    (match-plist (mrosetta-org-config-add configuration text-to-match source-filename)))
+                               ;; If matched, update the text at point
+                               (when match-plist
+                                 ;; Place point at correct indentation
+                                 (beginning-of-line)
+                                 (re-search-forward "^[[:blank:]]*"
+                                                    ;; Limit seatch to line at point
+                                                    (line-end-position)
+                                                    ;; In case of no indentation, move on
+                                                    t)
+                                 ;; Delete the current text
+                                 (delete-region (point) (line-end-position))
+                                 ;; Insert the full match string
+                                 (insert (apply 'mrosetta-id-serialize-match match-plist))
+                                 ;; Report the successful match to the user
+                                 (message "Metarosetta successfully matched text at point.")
+                                 ;; Explicitly return affirmatively
+                                 t))))
+              ;; Move on to the next configuration
+              (setq configurations (cdr configurations)))
+            ;; Report if no match found
+            (when (not configurations)
+              (message "Metarosetta failed to match text at point."))))))))
+
+(defun mrosetta-sync ()
+  "Synchronize all the possibly updated Metarosetta match instances within the current buffer."
+  (let ((source-filename (buffer-file-name)))
+    ;; If the current buffer is visiting a valid file, check the reverse index for tracked matches
+    (when source-filename
+      (let ((source-index-item (gethash source-filename
+                                        mrosetta-index-sources)))
+        ;; Only proceed if file in context is indexed
+        (when source-index-item
+          (let* ((source-type (car source-index-item))
+                 (number-of-matches (cdr source-index-item))
+                 ;; Fetch all the matches depending on source type
+                 (matches (if (eq source-type :root)
+                              ;; Fetch source matches
+                              (mrosetta-source-read source-filename number-of-matches)
+                            ;; Fetch output matches using the corresponding connector
+                            (let ((connector (cdr (assq source-type mrosetta-index-connectors))))
+                              (mrosetta-out-read connector source-filename number-of-matches)))))
+            ;; Iterate over each match and update configuration if needed
+            (mapc (lambda (match-plist)
+                    (let* ((configuration (cdr (assq (plist-get match-plist :root-key)
+                                                     mrosetta-index-configurations)))
+                           ;; Depending on match type, update downstream or upstream
+                           (updated-match-plist (if (not (plist-get match-plist :output-key))
+                                                    ;; An original match, update downstream
+                                                    (mrosetta-org-config-update-from-source configuration match-plist)
+                                                  ;; An output match, update upstream
+                                                  (mrosetta-org-config-update-from-endpoint configuration match-plist))))
+                      ;; Report if the match is indeed updated
+                      (when updated-match-plist
+                        (message "Metarosetta successfully updated match %s."
+                                 (apply 'mrosetta-id-serialize-match-identifier updated-match-plist)))))
+                  matches)))))))
+
+(defun mrosetta-jump ()
+  "With current buffer visiting an output endpoint, and current point set on a valid output match, jump to the original match at its source file. If a buffer visiting the source exists, switch there, otherwise create a new buffer."
+  (let ((match-id-plist (save-excursion
+                          ;; Start identifier search at the beginning of the line
+                          (beginning-of-line)
+                          (save-match-data
+                            ;; Search for the identifier pattern and parse it
+                            (and (re-search-forward (mrosetta-id-generate-re)
+                                                    ;; Limit search to current line only
+                                                    (line-end-position)
+                                                    ;; Return nil if no identifier found
+                                                    t)
+                                 ;; Identifier pattern found, parse it
+                                 (mrosetta-id-parse-match-identifier (match-string 0)))))))
+    ;; If match identifier found, look up the source file name
+    (when match-id-plist
+      (let* ((configuration (cdr (assq (plist-get match-id-plist :root-key)
+                                       mrosetta-index-configurations)))
+             (source-filename (mrosetta-org-config-original-match-source-filename configuration
+                                                                                  (plist-get match-id-plist :match-serial))))
+        ;; Jump to source filename buffer
+        (find-file source-filename)
+        ;; Set point to original match in context
+        (goto-char (point-min))
+        (search-forward (apply 'mrosetta-id-serialize-match-identifier match-id-plist))))))
 
 (provide 'metarosetta)
 
