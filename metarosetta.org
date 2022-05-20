@@ -1779,7 +1779,7 @@ Given a core match string, along with a root expression key, match serial key an
   "Serialize the full match string by composing the match identifier from the :root-key, :match-serial and an optional :output-key within ARGS and ultimately appending it to the :core-match in string form."
   (concat (plist-get args :core-match)
           " "
-          (mrosetta-id-serialize-match-identifier args)))
+          (apply 'mrosetta-id-serialize-match-identifier args)))
 #+END_SRC
 
 ** Org Configuration File
@@ -2123,14 +2123,14 @@ Serialize the org configuration match object into its corresponding org headline
          ;; Serialize the parsed match Lisp structure into an org source block
          (source-block (org-ml-build-src-block :language "emacs-lisp"
                                                :value (prin1-to-string parsed-match))))
+    ;; Set the serialized source block as the org element's inner section
+    (setq oelement (org-ml-headline-set-section `(,source-block) oelement))
     ;; Append the match hash and identifier, as well as last updated and operation type metadata properties within the headline element property drawer
     (setq oelement (->> (org-ml-headline-set-node-property "HASH" (number-to-string match-hash) oelement)
                         (org-ml-headline-set-node-property "ROOT-KEY" (symbol-name root-key))
                         (org-ml-headline-set-node-property "SERIAL" (number-to-string serial))
                         (org-ml-headline-set-node-property "LAST-UPDATED" last-updated)
                         (org-ml-headline-set-node-property "OPERATION-TYPE" (symbol-name op-type))))
-    ;; Set the serialized source block as the org element's inner section
-    (setq oelement (org-ml-headline-set-section `(,source-block) oelement))
     ;; Return the serialized org-ml element
     oelement))
 #+END_SRC
@@ -2418,7 +2418,7 @@ Generate a new output match in context of the output expression object, based on
                                                   (> (length path) 0))
                                          ;; Use regular expression to split the path between static and dynamic parts
                                          (save-match-data
-                                           (or (when (string-match "^\\(?1:\\(?:/?[[:word:]]+\\)*\\)\\(?2:/\\)?\\$\\(?3:[[:word:]]+\\)\\(?4:.*\\)$" path)
+                                           (or (when (string-match "^\\(?1:\\(?:/?[^/]+\\)*\\)\\(?2:/\\)?\\$\\(?3:[[:word:]]+\\)\\(?4:.*\\)$" path)
                                                  ;; Replace the path element's key symbol with the corresponding data value
                                                  (let* ((static-path (match-string 1 path))
                                                         ;; Grab the possible separator, depending on key location within the path
@@ -2991,9 +2991,11 @@ Load all configuration org files from a given folder.
   ;; First set the configuration directory
   (setq mrosetta-configuration-directory configuration-directory)
   ;; Load, parse and initialize all Metarosetta configurations
-  (let ((configuration-files (cl-remove-if-not (lambda (filename)
-                                                 (eq (file-name-extension filename) "org"))
-                                               (directory-files configuration-directory))))
+  (let ((configuration-files (directory-files configuration-directory
+                                              ;; Get the full path
+                                              'full
+                                              ;; Return only org files
+                                              ".+\\.org$")))
     ;; Parse all configuration files and add them to the global index by their respective keys
     (setq mrosetta-index-configurations
           (mapcar (lambda (configuration-file)
@@ -3001,6 +3003,9 @@ Load all configuration org files from a given folder.
                       (insert-file-contents configuration-file)
                       (let ((oconfig (mrosetta-org-parse (mrosetta-org-config :source-filename configuration-file)
                                                          (org-ml-parse-subtrees 'all))))
+                        ;; Repport successful load
+                        (message "Metarosetta successfully loaded %s" configuration-file)
+                        ;; Return configuration pair
                         `(,(mrosetta-org-config-key oconfig) . ,oconfig))))
                   configuration-files))))
 #+END_SRC
@@ -3025,7 +3030,12 @@ Save all the configuration org files to the configuration directory.
               ;; Delete any currently saved configuration data
               (delete-region (point) (point-max))
               ;; Insert the serialized org data
-              (insert (org-ml-to-string (mrosetta-org-serialize configuration))))))
+              (insert (string-join (mapcar 'org-ml-to-string
+                                           (mrosetta-org-serialize configuration))
+                                   ;; Join all headline elements directly
+                                   "")))
+            ;; Report successful save
+            (message "Metarosetta successfully saved %s" configuration-file)))
         mrosetta-index-configurations))
 #+END_SRC
 
@@ -3039,6 +3049,7 @@ Try to match the line at point against any of the configured metalanguage expres
 #+BEGIN_SRC emacs-lisp :tangle yes
 (defun mrosetta-match ()
   "Try to add the text from line at point to any compatible Metarosetta configuration currently active and tracking."
+  (interactive)
   (let ((source-filename (buffer-file-name)))
     ;; If the current buffer is visiting a valid file, grab the current line's text to match
     (when source-filename
@@ -3084,6 +3095,7 @@ This function is best utilized when hooked up to the ~after-save-hook~, so any p
 #+BEGIN_SRC emacs-lisp :tangle yes
 (defun mrosetta-sync ()
   "Synchronize all the possibly updated Metarosetta match instances within the current buffer."
+  (interactive)
   (let ((source-filename (buffer-file-name)))
     ;; If the current buffer is visiting a valid file, check the reverse index for tracked matches
     (when source-filename
@@ -3124,6 +3136,7 @@ With point set on an output match line, jump to the original match in its source
 #+BEGIN_SRC emacs-lisp :tangle yes
 (defun mrosetta-jump ()
   "With current buffer visiting an output endpoint, and current point set on a valid output match, jump to the original match at its source file. If a buffer visiting the source exists, switch there, otherwise create a new buffer."
+  (interactive)
   (let ((match-id-plist (save-excursion
                           ;; Start identifier search at the beginning of the line
                           (beginning-of-line)

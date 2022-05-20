@@ -659,7 +659,7 @@
   "Serialize the full match string by composing the match identifier from the :root-key, :match-serial and an optional :output-key within ARGS and ultimately appending it to the :core-match in string form."
   (concat (plist-get args :core-match)
           " "
-          (mrosetta-id-serialize-match-identifier args)))
+          (apply 'mrosetta-id-serialize-match-identifier args)))
 
 (defclass mrosetta-org-expression ()
   ((mlexpression
@@ -1089,7 +1089,7 @@
                                                   (> (length path) 0))
                                          ;; Use regular expression to split the path between static and dynamic parts
                                          (save-match-data
-                                           (or (when (string-match "^\\(?1:\\(?:/?[[:word:]]+\\)*\\)\\(?2:/\\)?\\$\\(?3:[[:word:]]+\\)\\(?4:.*\\)$" path)
+                                           (or (when (string-match "^\\(?1:\\(?:/?[^/]+\\)*\\)\\(?2:/\\)?\\$\\(?3:[[:word:]]+\\)\\(?4:.*\\)$" path)
                                                  ;; Replace the path element's key symbol with the corresponding data value
                                                  (let* ((static-path (match-string 1 path))
                                                         ;; Grab the possible separator, depending on key location within the path
@@ -1511,9 +1511,11 @@
   ;; First set the configuration directory
   (setq mrosetta-configuration-directory configuration-directory)
   ;; Load, parse and initialize all Metarosetta configurations
-  (let ((configuration-files (cl-remove-if-not (lambda (filename)
-                                                 (eq (file-name-extension filename) "org"))
-                                               (directory-files configuration-directory))))
+  (let ((configuration-files (directory-files configuration-directory
+                                              ;; Get the full path
+                                              'full
+                                              ;; Return only org files
+                                              ".+\\.org$")))
     ;; Parse all configuration files and add them to the global index by their respective keys
     (setq mrosetta-index-configurations
           (mapcar (lambda (configuration-file)
@@ -1521,6 +1523,9 @@
                       (insert-file-contents configuration-file)
                       (let ((oconfig (mrosetta-org-parse (mrosetta-org-config :source-filename configuration-file)
                                                          (org-ml-parse-subtrees 'all))))
+                        ;; Repport successful load
+                        (message "Metarosetta successfully loaded %s" configuration-file)
+                        ;; Return configuration pair
                         `(,(mrosetta-org-config-key oconfig) . ,oconfig))))
                   configuration-files))))
 
@@ -1539,11 +1544,14 @@
               ;; Delete any currently saved configuration data
               (delete-region (point) (point-max))
               ;; Insert the serialized org data
-              (insert (org-ml-to-string (mrosetta-org-serialize configuration))))))
+              (insert (org-ml-to-string (mrosetta-org-serialize configuration))))
+            ;; Report successful save
+            (message "Metarosetta successfully saved %s" configuration-file)))
         mrosetta-index-configurations))
 
 (defun mrosetta-match ()
   "Try to add the text from line at point to any compatible Metarosetta configuration currently active and tracking."
+  (interactive)
   (let ((source-filename (buffer-file-name)))
     ;; If the current buffer is visiting a valid file, grab the current line's text to match
     (when source-filename
@@ -1581,6 +1589,7 @@
 
 (defun mrosetta-sync ()
   "Synchronize all the possibly updated Metarosetta match instances within the current buffer."
+  (interactive)
   (let ((source-filename (buffer-file-name)))
     ;; If the current buffer is visiting a valid file, check the reverse index for tracked matches
     (when source-filename
@@ -1615,6 +1624,7 @@
 
 (defun mrosetta-jump ()
   "With current buffer visiting an output endpoint, and current point set on a valid output match, jump to the original match at its source file. If a buffer visiting the source exists, switch there, otherwise create a new buffer."
+  (interactive)
   (let ((match-id-plist (save-excursion
                           ;; Start identifier search at the beginning of the line
                           (beginning-of-line)
