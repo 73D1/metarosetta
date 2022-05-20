@@ -889,14 +889,14 @@
          ;; Serialize the parsed match Lisp structure into an org source block
          (source-block (org-ml-build-src-block :language "emacs-lisp"
                                                :value (prin1-to-string parsed-match))))
+    ;; Set the serialized source block as the org element's inner section
+    (setq oelement (org-ml-headline-set-section `(,source-block) oelement))
     ;; Append the match hash and identifier, as well as last updated and operation type metadata properties within the headline element property drawer
     (setq oelement (->> (org-ml-headline-set-node-property "HASH" (number-to-string match-hash) oelement)
                         (org-ml-headline-set-node-property "ROOT-KEY" (symbol-name root-key))
                         (org-ml-headline-set-node-property "SERIAL" (number-to-string serial))
                         (org-ml-headline-set-node-property "LAST-UPDATED" last-updated)
                         (org-ml-headline-set-node-property "OPERATION-TYPE" (symbol-name op-type))))
-    ;; Set the serialized source block as the org element's inner section
-    (setq oelement (org-ml-headline-set-section `(,source-block) oelement))
     ;; Return the serialized org-ml element
     oelement))
 
@@ -1544,7 +1544,10 @@
               ;; Delete any currently saved configuration data
               (delete-region (point) (point-max))
               ;; Insert the serialized org data
-              (insert (org-ml-to-string (mrosetta-org-serialize configuration))))
+              (insert (string-join (mapcar 'org-ml-to-string
+                                           (mrosetta-org-serialize configuration))
+                                   ;; Join all headline elements directly
+                                   "")))
             ;; Report successful save
             (message "Metarosetta successfully saved %s" configuration-file)))
         mrosetta-index-configurations))
