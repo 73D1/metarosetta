@@ -1327,7 +1327,7 @@
           ;; Find the next match by searching for the identifier pattern
           (re-search-forward match-id-re)
           ;; Extract the raw match
-          (let ((raw-match (string-trim (buffer-substring (line-beginning-position) (line-end-position)))))
+          (let ((raw-match (string-trim (buffer-substring-no-properties (line-beginning-position) (line-end-position)))))
             ;; Push the parsed match to the resulting list
             (push (mrosetta-id-parse-match raw-match)
                   matches)))
@@ -1460,7 +1460,7 @@
           (search-forward (concat item-mark " ")
                           (line-end-position))
           ;; Extract the raw match
-          (let ((raw-match (buffer-substring (point) (line-end-position))))
+          (let ((raw-match (buffer-substring-no-properties (point) (line-end-position))))
             ;; Push the parsed match to the resulting list
             (push (mrosetta-id-parse-match raw-match)
                   matches)))
@@ -1558,7 +1558,7 @@
   (let ((source-filename (buffer-file-name)))
     ;; If the current buffer is visiting a valid file, grab the current line's text to match
     (when source-filename
-      (let ((text-to-match (string-trim (buffer-substring (line-beginning-position) (line-end-position)))))
+      (let ((text-to-match (string-trim (buffer-substring-no-properties (line-beginning-position) (line-end-position)))))
         ;; Only proceed if there's text to actually process
         (when (> (length text-to-match) 0)
           (let ((configurations mrosetta-index-configurations))
