@@ -158,6 +158,11 @@
     :type (or null symbol)
     :documentation "Specifies a symbol referencing a stored modifier function, if any. Either a symbol or nil."
     :reader mrosetta-mlexpression-modifier)
+   (modifier-reverse
+    :initform 'nil
+    :type (or null symbol)
+    :documentation "Specifies a symbol referencing a stored modifier function which effectively reverses the modifier in context of the expression, if any. Either symbol or nil."
+    :reader mrosetta-mlexpression-modifier-reverse)
    (is-optional
     :initform 'nil
     :documentation "Specifies whether the encompassing expression is optional to match within input text. Either non-nil or nil."
@@ -288,9 +293,15 @@
 
 (defvar mrosetta-mlsyntax-modifiers '())
 
+(defvar mrosetta-mlsyntax-modifiers-reverse '())
+
 (push '(uppercase . upcase) mrosetta-mlsyntax-modifiers)
 
+(push '(uppercase . downcase) mrosetta-mlsyntax-modifiers-reverse)
+
 (push '(lowercase . downcase) mrosetta-mlsyntax-modifiers)
+
+(push '(lowercase . upcase) mrosetta-mlsyntax-modifiers-reverse)
 
 (cl-defmethod mrosetta-parse-modifier ((mlexpression mrosetta-mlexpression) &rest args)
   "Parse the modifier symbol from :right arg within ARGS into the MLEXPRESSION instance in context."
@@ -298,7 +309,9 @@
     (when (eq modifier-symbol nil)
       (error "Metalanguage syntax error: Modifier expression without contextual argument symbol"))
     (setf (slot-value mlexpression 'modifier)
-          (cdr (assq modifier-symbol mrosetta-mlsyntax-modifiers))))
+          (cdr (assq modifier-symbol mrosetta-mlsyntax-modifiers)))
+    (setf (slot-value mlexpression 'modifier-reverse)
+          (cdr (assq modifier-symbol mrosetta-mlsyntax-modifiers-reverse))))
   (plist-put args :right nil))
 
 (push '(to . mrosetta-parse-modifier) mrosetta-mlsyntax)
@@ -539,11 +552,14 @@
                      ;; Update leaf elements
                      (when (eq (mrosetta-mlexpression-extype mlexpression) :match)
                        ;; Update match text, including ignorable matches
-                       (let ((buffer (match-string (mrosetta-mlexpression-rbuffer-key mlexpression) extext))
-                             (prefix (mrosetta-mlexpression-match-prefix mlexpression))
-                             (suffix (mrosetta-mlexpression-match-suffix mlexpression))
-                             (match (or instance-exdata
-                                        (match-string (mrosetta-mlexpression-rmatch-key mlexpression) extext))))
+                       (let* ((buffer (match-string (mrosetta-mlexpression-rbuffer-key mlexpression) extext))
+                              (prefix (mrosetta-mlexpression-match-prefix mlexpression))
+                              (suffix (mrosetta-mlexpression-match-suffix mlexpression))
+                              (modifier-reverse (mrosetta-mlexpression-modifier-reverse mlexpression))
+                              (match (or (when (and modifier-reverse instance-exdata)
+                                           (funcall modifier-reverse instance-exdata))
+                                         instance-exdata
+                                         (match-string (mrosetta-mlexpression-rmatch-key mlexpression) extext))))
                          (setq instance-newtext (concat buffer prefix match suffix))))
                      (when (eq (mrosetta-mlexpression-extype mlexpression) :literal)
                        ;; Just include the literal instance
@@ -575,16 +591,16 @@
         (match-gkey (plist-get args :match-gkey))
         (output-gkey (plist-get args :output-gkey)))
     (concat "\\" left-delimiter
-            "\\(?" root-gkey ":"
+            "\\(?" (when root-gkey (number-to-string root-gkey)) ":"
             "[[:alpha:]]+"
             "\\)"
             "\\-"
-            "\\(?" match-gkey ":"
+            "\\(?" (when match-gkey (number-to-string match-gkey)) ":"
             "[[:digit:]]+"
             "\\)"
             "\\(?:"
-            "-"
-            "\\(?" output-gkey ":"
+            "\\-"
+            "\\(?" (when output-gkey (number-to-string output-gkey)) ":"
             "[[:alpha:]]+"
             "\\)"
             "\\)?"
@@ -767,11 +783,16 @@
     :type symbol
     :documentation "The key symbol of the output configuration object defining the match output."
     :reader mrosetta-org-match-output-key)
+   (target-type
+    :initarg :target-type
+    :type symbol
+    :documentation "A symbol denoting the type of the target file or endpoint where the match in context should be appended to, or sent to.")
    (target-endpoint
     :initarg :target-endpoint
     :type string
     :documentation "The literal filename, or URI, of the target where the match in context should be appended to, or sent to."
-    :reader mrosetta-org-match-output-target-endpoint)
+    :reader mrosetta-org-match-output-target-endpoint
+    :writer mrosetta-org-match-output-target-endpoint-set)
    (target-section
     :initarg :target-section
     :type string
@@ -854,7 +875,7 @@
   (let ((raw-match (car (org-ml-get-property :title oelement))))
     (setf (slot-value omatch 'raw-match) raw-match))
   ;; Parse the processed match structure from the contained source block
-  (let* ((source-block (car (org-ml-headline-get-section oelement)))
+  (let* ((source-block (cadr (org-ml-headline-get-section oelement)))
          (parsed-match (car (read-from-string (org-ml-get-property :value source-block)))))
     (setf (slot-value omatch 'parsed-match) parsed-match))
   ;; Parse the integer hash of the raw match used for comparison purposes
@@ -929,7 +950,14 @@
   (cl-call-next-method)
   ;; Parse the source filename where the original match is tracked from
   (let ((source-filename (org-ml-headline-get-node-property "SOURCE-FILE" oelement)))
-    (setf (slot-value omatch 'source-filename) source-filename))
+    (setf (slot-value omatch 'source-filename) source-filename)
+    ;; Update the reverse index of sources
+    (let ((index-entry (gethash source-filename
+                                mrosetta-index-sources
+                                '(:root . 0))))
+      (puthash source-filename
+               `(,(car index-entry) . ,(1+ (cdr index-entry)))
+               mrosetta-index-sources)))
   ;; Return the parsed object
   omatch)
 
@@ -985,9 +1013,18 @@
   ;; Set the match output key
   (let ((output-key (intern (org-ml-headline-get-node-property "OUTPUT-KEY" oelement))))
     (setf (slot-value omatch 'output-key) output-key))
-  ;; Parse the target endpoint where the output match is placed to
-  (let ((target-endpoint (org-ml-headline-get-node-property "TARGET-ENDPOINT" oelement)))
-    (setf (slot-value omatch 'target-endpoint) target-endpoint))
+  ;; Parse the target type as well as endpoint where the output match is placed to
+  (let ((target-type (intern (org-ml-headline-get-node-property "TARGET-TYPE" oelement)))
+        (target-endpoint (org-ml-headline-get-node-property "TARGET-ENDPOINT" oelement)))
+    (setf (slot-value omatch 'target-type) target-type)
+    (setf (slot-value omatch 'target-endpoint) target-endpoint)
+    ;; Update the reverse index of sources
+    (let ((index-entry (gethash target-endpoint
+                                mrosetta-index-sources
+                                `(,target-type . 0))))
+      (puthash target-endpoint
+               `(,(car index-entry) . ,(1+ (cdr index-entry)))
+               mrosetta-index-sources)))
   ;; Parse the target section path defining the section within which the output match is placed
   (let ((target-section (org-ml-headline-get-node-property "TARGET-SECTION" oelement)))
     (setf (slot-value omatch 'target-section) target-section))
@@ -997,12 +1034,14 @@
 (cl-defmethod mrosetta-org-serialize ((omatch mrosetta-org-match-output))
   "Serialize the output match object OMATCH into an org-ml headline element."
   (let ((output-key (slot-value omatch 'output-key))
+        (target-type (slot-value omatch 'target-type))
         (target-endpoint (slot-value omatch 'target-endpoint))
         (target-section (slot-value omatch 'target-section))
         ;; Serialize the base properties first
         (oelement (cl-call-next-method)))
     ;; Append the target endpoint as well as the section path within the headline element property drawer
     (setq oelement (->> (org-ml-headline-set-node-property "OUTPUT-KEY" (symbol-name output-key) oelement)
+                        (org-ml-headline-set-node-property "TARGET-TYPE" (symbol-name target-type))
                         (org-ml-headline-set-node-property "TARGET-ENDPOINT" target-endpoint)
                         (org-ml-headline-set-node-property "TARGET-SECTION" target-section)))
     ;; Return the serialized org-ml element
@@ -1118,18 +1157,21 @@
                                                :output-key output-key
                                                :last-updated (current-time-string)
                                                :op-type :created
+                                               :target-type target-type
                                                :target-endpoint target-endpoint
                                                :target-section target-section))
     ;; Add the match to the top of the matches association list, by its serial key
     (push `(,(mrosetta-org-match-serial new-match) . ,new-match)
           (slot-value oexpression 'matches))
-    ;; Push out the new output match through the connector
-    (mrosetta-out-add connector
-                      target-endpoint target-section
-                      `(:root-key ,(mrosetta-org-match-root-key new-match)
-                        :match-serial ,(mrosetta-org-match-serial new-match)
-                        :output-key ,(mrosetta-org-match-output-key new-match)
-                        :core-match ,(mrosetta-org-match-raw new-match)))
+    ;; Push out the new output match through the connector, and get the ultimate endpoint
+    (setq target-endpoint (mrosetta-out-add connector
+                                            target-endpoint target-section
+                                            `(:root-key ,(mrosetta-org-match-root-key new-match)
+                                              :match-serial ,(mrosetta-org-match-serial new-match)
+                                              :output-key ,(mrosetta-org-match-output-key new-match)
+                                              :core-match ,(mrosetta-org-match-raw new-match))))
+    ;; Update the endpoint within the match
+    (mrosetta-org-match-output-target-endpoint-set new-match target-endpoint)
     ;; Add the match to the reverse index by the output endpoint name
     (let ((index-entry (gethash target-endpoint
                                 mrosetta-index-sources
@@ -1325,7 +1367,7 @@
       (while (> number-of-matches 0)
         (save-match-data
           ;; Find the next match by searching for the identifier pattern
-          (re-search-forward match-id-re)
+          (re-search-forward (concat match-id-re "$"))
           ;; Extract the raw match
           (let ((raw-match (string-trim (buffer-substring-no-properties (line-beginning-position) (line-end-position)))))
             ;; Push the parsed match to the resulting list
@@ -1345,7 +1387,7 @@
       ;; Star search from the beginning
       (goto-char (point-min))
       ;; Find the line of the match in context
-      (search-forward match-identifier)
+      (re-search-forward (concat (regexp-quote match-identifier) "$"))
       ;; Place point at correct indentation
       (beginning-of-line)
       (re-search-forward "^[[:blank:]]*"
@@ -1370,13 +1412,13 @@
   :abstract t)
 
 (cl-defgeneric mrosetta-out-add ((connector mrosetta-out) endpoint section output-match-plist)
-  "Via the output CONNECTOR, add the output match defined by the OUTPUT-MATCH-PLIST to the provided ENDPOINT within the specified SECTION.")
+  "Via the output CONNECTOR, add the output match defined by the OUTPUT-MATCH-PLIST to the provided ENDPOINT within the specified SECTION. If successful, return the endpoint where added. In cases of symlinks or link forwarding setups, this can vary from ENDPOINT.")
 
 (cl-defgeneric mrosetta-out-read ((connector mrosetta-out) endpoint number-of-matches)
   "Via the output CONNECTOR, read NUMBER-OF-MATCHES from the specified ENDPOINT across all sections.")
 
 (cl-defgeneric mrosetta-out-update ((connector mrosetta-out) endpoint section output-match-plist)
-  "Via the output CONNECTOR, update the output match defined by the OUTPUT-MATCH-PLIST located in the specified ENDPOINT within a specific SECTION.")
+  "Via the output CONNECTOR, update the output match defined by the OUTPUT-MATCH-PLIST located in the specified ENDPOINT within a specific SECTION. If successful, return the endpoint where updated. In cases of symlinks or link forwarding setups, this can vary from ENDPOINT.")
 
 (defclass mrosetta-out-to-structured-text (mrosetta-out)
   ((heading-mark
@@ -1413,17 +1455,20 @@
                                                     (when (> (length current-heading-mark) 0)
                                                       (save-excursion
                                                         (let ((parent-end-position (section-end-position (substring current-heading-mark 0 -1))))
-                                                          (or (search-forward current-heading-mark
-                                                                              parent-end-position
-                                                                              t)
+                                                          (or (re-search-forward (concat "^[[:blank:]]*"
+                                                                                         (regexp-quote current-heading-mark))
+                                                                                 parent-end-position
+                                                                                 t)
                                                               parent-end-position))))))
                     (section-end-position section-heading-mark)))))
 
 (cl-defmethod mrosetta-out-add ((connector mrosetta-out-to-structured-text) endpoint section output-match-plist)
-  "Via the structured text output CONNECTOR, append the output match defined by the OUTPUT-MATCH-PLIST to the ENDPOINT file within the specified SECTION."
+  "Via the structured text output CONNECTOR, append the output match defined by the OUTPUT-MATCH-PLIST to the ENDPOINT file within the specified SECTION. If successful, return the actual endpoint where added. In cases of symlinks, this can vary from ENDPOINT."
   (let* (section-bounds
          (item-mark (slot-value connector 'item-mark))
          (full-item (concat item-mark " " (apply 'mrosetta-id-serialize-match output-match-plist))))
+    ;; Follow through the symlink, if such, and get the absolute file name
+    (setq endpoint (file-truename endpoint))
     (with-temp-file endpoint
       (insert-file-contents endpoint)
       ;; Navigate to section in context, and get section bounds
@@ -1438,8 +1483,8 @@
       (end-of-line)
       (newline-and-indent)
       (insert full-item))
-    ;; Just return affirmatively
-    t))
+    ;; Return with the endpoint file name
+    endpoint))
 
 (cl-defmethod mrosetta-out-read ((connector mrosetta-out-to-structured-text) endpoint number-of-matches)
   "Via the structured text output CONNECTOR, read NUMBER-OF-MATCHES from the specified ENDPOINT across all sections."
@@ -1454,7 +1499,7 @@
       (while (> number-of-matches 0)
         (save-match-data
           ;; Find the next match line by searching for the identifier pattern
-          (re-search-forward match-id-re)
+          (re-search-forward (concat match-id-re "$"))
           ;; Set point at the beginning of the actual match
           (beginning-of-line)
           (search-forward (concat item-mark " ")
@@ -1470,17 +1515,19 @@
     matches))
 
 (cl-defmethod mrosetta-out-update ((connector mrosetta-out-to-structured-text) endpoint section output-match-plist)
-  "Via the structured text output CONNECTOR, update the match defined by the OUTPUT-MATCH-PLIST located in the specified ENDPOINT within a specific SECTION."
+  "Via the structured text output CONNECTOR, update the match defined by the OUTPUT-MATCH-PLIST located in the specified ENDPOINT within a specific SECTION. If successful, return the actual endpoint where added. In cases of symlinks, this can vary from ENDPOINT."
   (let (section-bounds
         (item-mark (slot-value connector 'item-mark))
         (match-identifier (apply 'mrosetta-id-serialize-match-identifier output-match-plist))
         (raw-match (apply 'mrosetta-id-serialize-match output-match-plist)))
+    ;; Follow through the symlink, if such, and get the absolute file name
+    (setq endpoint (file-truename endpoint))
     (with-temp-file endpoint
       (insert-file-contents endpoint)
       ;; Navigate to section in context, and get section bounds
       (setq section-bounds (mrosetta-out-to-structured-text-goto-section connector section))
       ;; Search for the item line containing the match ID
-      (search-forward match-identifier
+      (re-search-forward (concat (regexp-quote match-identifier) "$")
                       ;; Limit the search to the encompassing section only
                       (cdr section-bounds))
       ;; Set point at the beginning of the item's line
@@ -1492,8 +1539,8 @@
       (delete-region (point) (line-end-position))
       ;; Insert the updated match at point
       (insert raw-match))
-    ;; Return affirmatively
-    t))
+    ;; Return with the endpoint file name
+    endpoint))
 
 (defun mrosetta-register-connectors (&rest connectors)
   "Register one or more Metarosetta output CONNECTORS."
@@ -1633,7 +1680,7 @@
                           (beginning-of-line)
                           (save-match-data
                             ;; Search for the identifier pattern and parse it
-                            (and (re-search-forward (mrosetta-id-generate-re)
+                            (and (re-search-forward (concat (mrosetta-id-generate-re) "$")
                                                     ;; Limit search to current line only
                                                     (line-end-position)
                                                     ;; Return nil if no identifier found
@@ -1650,7 +1697,10 @@
         (find-file source-filename)
         ;; Set point to original match in context
         (goto-char (point-min))
-        (search-forward (apply 'mrosetta-id-serialize-match-identifier match-id-plist))))))
+        (let ((source-match-id (mrosetta-id-serialize-match-identifier :root-key (plist-get match-id-plist :root-key)
+                                                                       :match-serial (plist-get match-id-plist :match-serial))))
+          (save-match-data
+            (re-search-forward (concat (regexp-quote source-match-id) "$"))))))))
 
 (provide 'metarosetta)
 
