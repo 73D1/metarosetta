@@ -1,0 +1,30 @@
+#+TITLE: Example Config
+
+This org file serves as an example of a Metarosetta configuration document.
+
+Each Metarosetta configuration document should consist of two or more root-level org headlines,
+each representing a single metalanguage expression.
+
+The first headline within the document represents the /root/ metalanguage expression of the configuration in context.
+This is the expression against which text is matched when invoking ~metarosetta-match~ on a given line at point.
+
+The second, and later, headlines represent respective output metalanguage expressions.
+These define how the parsed and structured data extracted from the original match should be put out.
+Naturally, output expression tags should semantically correspond to root expression tags.
+
+Once loaded, Metarosetta saves all matches as sub-headlines, with all contextual metadata,
+under their respectively matching expression headlines.
+
+* (literal ";;") (WORD as status to lowercase) ("/" suffixed words as project) (contextual paragraph as task) (":" prefixed words as tags) ("-" prefixed words as contexts)
+:PROPERTIES:
+:KEY: ltask
+:END:
+
+* ("[" prefixed "]" suffixed word as status) (contextual paragraph as task) ("#" prefixed words as tags)
+:PROPERTIES:
+:KEY: mdtask
+:TARGET-TYPE: md
+:TARGET-SECTION-TEMPLATE: $contexts
+:TARGET-ENDPOINT-TEMPLATE: ~/tasks/$project.md
+:TEMPLATE: [todo] Do this thing #critical
+:END:

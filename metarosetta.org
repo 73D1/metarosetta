@@ -1,4 +1,4 @@
-#+TITLE: Project Metarosetta Emacs Package
+#+TITLE: Metarosetta Source Document
 
 * Header
 
@@ -103,6 +103,7 @@ The class itself is designed as a no-argument constructor as the key generator i
     :reader metarosetta-keychain-lastkey))
   "A key generator helper class.")
 #+END_SRC
+
 *** Behavior
 This section covers all defined behavior for the keychain class.
 
@@ -116,6 +117,7 @@ Register for a new key with a particular keychain instance.
   (let ((key (+ 1 (slot-value keychain 'lastkey))))
     (setf (slot-value keychain 'lastkey) key)))
 #+END_SRC
+
 * The Metalanguage
 The metalanguage specification and parser.
 
@@ -140,6 +142,7 @@ This is stored in list form.
  :documentation "The metalanguage-specified definition of the expression in context."
  :reader metarosetta-mlexpression-mldefinition)
 #+END_SRC
+
 **** Expression Type
 Specifies the exact type of the expression in context.
 
@@ -167,6 +170,7 @@ A match expression is specified as a ~:match~.
 An expression matching a sequence of its nested child expressions.
 
 A fractal expression is specified as a ~:fractal~.
+
 **** Fractals
 All the fractal sub-elements existing within the encompassing expression instance. Only ~:fractal~ instances can contain sub-expressions themselves.
 
@@ -180,6 +184,7 @@ The property itself is a list of ~metarosetta-expression~ instances.
  :documentation "A list of metarosetta-expression instances contained within the encompassing expression instance."
  :reader metarosetta-mlexpression-fractals)
 #+END_SRC
+
 **** Regular Expression Properties
 This section contains all the properties pertaining to the encompassing expression's regex, its group keys and resulting matches of the current input, if processed.
 
@@ -249,6 +254,7 @@ The foundational element from which the matching regular expression is construct
  :documentation "The regular expression used as a foundational base in compilation of the match-extracting regular expression."
  :reader metarosetta-mlexpression-rbase)
 #+END_SRC
+
 ****** Match
 The regular expression of the match itself.
 
@@ -271,6 +277,7 @@ The regex is paired with its group key used for match extraction.
  :documentation "The regex group key for the encompassing expression's output value."
  :reader metarosetta-mlexpression-rmatch-key)
 #+END_SRC
+
 ****** Prefix
 The regular expression used for matching a specified prefix of the expression in context, if any.
 
@@ -282,6 +289,7 @@ The regular expression used for matching a specified prefix of the expression in
  :documentation "The regular expression matching a specified prefix of the encompassing expression instance. Either a regex string or nil."
  :reader metarosetta-mlexpression-rprefix)
 #+END_SRC
+
 ****** Suffix
 The regular expression used for matching a specified suffix of the expression in context, if any.
 
@@ -293,6 +301,7 @@ The regular expression used for matching a specified suffix of the expression in
  :documentation "The regular expression matching a specified suffix of the encompassing expression instance. Either a regex string or nil."
  :reader metarosetta-mlexpression-rsuffix)
 #+END_SRC
+
 ****** Regex Boundaries
 Regular expressions used for regex-specific boundaries around the match.
 
@@ -307,6 +316,7 @@ The regular expression used for defining the left boundary of the match.
  :documentation "The left regex-specific boundary defining the beginning of the match."
  :reader metarosetta-mlexpression-left-rboundary)
 #+END_SRC
+
 ******* Right Boundary
 The regular expression used for defining the right boundary of the match.
 
@@ -318,6 +328,7 @@ The regular expression used for defining the right boundary of the match.
  :documentation "The right regex-specific boundary defining the end of the match."
  :reader metarosetta-mlexpression-right-rboundary)
 #+END_SRC
+
 ****** Surrounding Buffers
 Regular expressions used for matching buffer characters surrounding the match.
 
@@ -355,6 +366,7 @@ The property key to which the expression output value is assigned, if the expres
  :documentation "The property key to which the expression output value is assigned, if any. Either a string or nil."
  :reader metarosetta-mlexpression-key)
 #+END_SRC
+
 **** Specifier Properties
 All specifier parameters defined for the encompassing expression instance.
 
@@ -368,6 +380,7 @@ Match only uppercase words.
  :documentation "Specifies whether the encompassing expression matches only uppercase words. Either non-nil or nil."
  :reader metarosetta-mlexpression-is-uppercase)
 #+END_SRC
+
 ***** Capitalized
 Match only capitalized words.
 
@@ -378,6 +391,7 @@ Match only capitalized words.
  :documentation "Specifies whether the encompassing expression matches only capitalized words. Either non-nil or nil."
  :reader metarosetta-mlexpression-is-capitalized)
 #+END_SRC
+
 ***** Boundary Properties
 Specifies whether the match of the encompassing expression has static left or right boundaries.
 
@@ -392,6 +406,7 @@ Specifies a statically set match prefix, if the expression defines one.
  :documentation "Specifies the prefix all possible expression matches should have, if any. Either a string or nil."
  :reader metarosetta-mlexpression-match-prefix)
 #+END_SRC
+
 ****** Right Boundary
 Specifies a statically set match suffix, if the expression defines one.
 
@@ -403,6 +418,7 @@ Specifies a statically set match suffix, if the expression defines one.
  :documentation "Specifies the suffix all possible expression matches should have, if any. Either a string or nil."
  :reader metarosetta-mlexpression-match-suffix)
 #+END_SRC
+
 ***** Content
 Match only words containing specific characters or substrings.
 
@@ -414,6 +430,7 @@ Match only words containing specific characters or substrings.
  :documentation "Specifies a specific substring all possible expression matches should contain, if any. Either a string or nil."
  :reader metarosetta-mlexpression-match-substring)
 #+END_SRC
+
 ***** Literal
 Match only and exactly the literal text specified here.
 
@@ -427,6 +444,7 @@ This slot is only used in ~:literal~ expressions.
  :documentation "Specifies the literal string that the expression maches exclusively. Either a string or nill."
  :reader metarosetta-mlexpression-match-literal)
 #+END_SRC
+
 ***** Contextual
 Elastically match a region of text depending on neighboring elements.
 
@@ -439,6 +457,7 @@ This slot is only used in ~paragraph~ ~:match~ expressions since paragraphs matc
  :documentation "Specifies whether the encompassing expression is matched elastically depending on neighboring elements. Either non-nil or nil."
  :reader metarosetta-mlexpression-is-contextual)
 #+END_SRC
+
 **** Modifier
 Modifiers are useful when matched text needs to be formatted and /normalized/ before being structured within the output.
 
@@ -474,6 +493,7 @@ Specifies whether the entire expression and its fractals within (if any) are opt
  :documentation "Specifies whether the encompassing expression is optional to match within input text. Either non-nil or nil."
  :reader metarosetta-mlexpression-is-optional)
 #+END_SRC
+
 **** Ignorables
 Specifies whether the encompassing expression should be disregarded in structured output. /Ignorable/ expressions are matched but never included in structured output.
 
@@ -484,6 +504,7 @@ Specifies whether the encompassing expression should be disregarded in structure
  :documentation "Specifies whether the encompassing expression should be matched but disregarded in output. Either non-nil or nil."
  :reader metarosetta-mlexpression-should-ignore)
 #+END_SRC
+
 **** Plurality
 If the expression defines a plural match, then the output value is in list form and this property is non-nil.
 
@@ -494,6 +515,7 @@ If the expression defines a plural match, then the output value is in list form 
  :documentation "Specifies whether the encompassing expression matches plural values or just a single one. Either nil or non-nil."
  :reader metarosetta-mlexpression-is-plural)
 #+END_SRC
+
 *** Class Definition
 The /expression/ class is defined below, containing all the properties listed above.
 
@@ -573,6 +595,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (literal "Status Update:")
 #+END_SRC
+
 *** Word
 An expression used to capture a variable word from within matched text.
 
@@ -630,6 +653,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (WORD)
 #+END_SRC
+
 ***** Capitalized
 Match only capitalized words.
 
@@ -656,6 +680,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (Word)
 #+END_SRC
+
 **** Word Plurality
 Instead of a single value, capture all value occurrences matching defined criteria within the encompassing expression context.
 
@@ -681,6 +706,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (words)
 #+END_SRC
+
 *** Paragraph
 An expression used to capture a variable-length paragraph from within matched text.
 
@@ -736,7 +762,9 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (";" suffixed paragraphs)
 #+END_SRC
+
 *** Specifiers
+
 **** Content Specifier
 Match only elements containing specific characters or content.
 
@@ -772,6 +800,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (word with "-")
 #+END_SRC
+
 **** Boundaries
 Match only elements with the specified prefix or suffix. Note that the prefix or suffix itself isn't part of the match.
 
@@ -803,6 +832,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 ("#" prefixed word)
 #+END_SRC
+
 ***** Suffix
 Match only elements suffixed with the supplied quoted content.
 
@@ -831,6 +861,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (";" suffixed word)
 #+END_SRC
+
 **** Contextual
 Match elements based on contextual criteria of neighboring matches. Note that a contextual specifier is only applicable to ~paragraph~ expressions.
 
@@ -855,6 +886,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (contextual paragraph)
 #+END_SRC
+
 *** Modifiers
 Modify captured elements before structured output.
 
@@ -871,6 +903,7 @@ In order to support consistent textual reconstruction, a reverse index of modifi
 #+BEGIN_SRC emacs-lisp :tangle yes
 (defvar metarosetta-mlsyntax-modifiers-reverse '())
 #+END_SRC
+
 **** Uppercase
 Transform captured elements to uppercase format.
 
@@ -892,6 +925,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (word to uppercase)
 #+END_SRC
+
 **** Lowercase
 Transform captured elements to lowercase format.
 
@@ -913,6 +947,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (word to lowercase)
 #+END_SRC
+
 **** Modifier Argument Parser
 All modifier contextual arguments are handled by a singular modifier parser.
 
@@ -965,6 +1000,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (optional word)
 #+END_SRC
+
 *** Assignment
 Assign a key to the resulting value of the encompassing expression.
 
@@ -992,6 +1028,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (word as a_property)
 #+END_SRC
+
 *** Ignorables
 Specify whether the encompassing expression should be ignored from structured output. /Ignorable/ expressions are matched but never included in structured output.
 
@@ -1020,6 +1057,7 @@ A usage example is as follows:
 #+BEGIN_SRC text
 (ignorable ":" suffixed paragraph)
 #+END_SRC
+
 *** Collections
 Instead of matching a single occurrence of a complex expression, repetitively capture the corresponding expression within matching text containing the recurring pattern, while structuring the resulting output in list form.
 
@@ -1383,6 +1421,7 @@ Note that by metalanguage syntax, the outermost expression is auto-parenthesized
 #+END_SRC
 
 ** Words
+
 *** Uppercase Word
 Match a single uppercase word.
 
@@ -1530,6 +1569,7 @@ Task completed successfully :devops :api!
 : (tags "devops" "api")
 
 ** Paragraphs
+
 *** Paragraph Based on Criteria
 Match a paragraph of text conforming to specified criteria. Note that in order to successfully match a paragraph of text, both boundaries need to be either explicitly or contextually specified.
 
@@ -1569,6 +1609,7 @@ One task completed. Three tasks updated. Two tasks created.
 : (statements "one task completed" "three tasks updated" "two tasks created")
 
 ** Complex Expressions
+
 *** All-inclusive Match
 Match multiple elements alongside /ignorable/ information within human readable text. Structure the match within a root property.
 
@@ -1693,10 +1734,10 @@ These indices and reverse indices enable various types of lookups needed to crea
 All registered connectors, indexed by their respective compatible syntax types.
 
 #+NAME: metarosetta-index-connectors
-#+begin_src emacs-lisp :tangle yes
+#+BEGIN_SRC emacs-lisp :tangle yes
 (defvar metarosetta-index-connectors '()
   "Metarosetta's global index of registered output connectors by the target syntax type symbol.")
-#+end_src
+#+END_SRC
 
 *** Configuration Index
 All the loaded configuration files, defined around their respective /root/ metalanguage expressions used to check against potential matches, and indexed by these expressions' keys.
