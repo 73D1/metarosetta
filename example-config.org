@@ -12,7 +12,12 @@ The second, and later, headlines represent respective output metalanguage expres
 These define how the parsed and structured data extracted from the original match should be put out.
 Naturally, output expression tags should semantically correspond to root expression tags.
 
-Once loaded, Metarosetta saves all matches as sub-headlines, with all contextual metadata,
+In addition to using root expression tags within output expressions, these tags can also be used to dynamically
+interpolate output endpoint paths, such as filenames depending on specific match data, as well as target sections
+of endpoints within which respective output matches should be added.
+All such tags support list form, so a list of matched elements is interpreted as a sequence of respective points along the path.
+
+Once loaded, Metarosetta saves all matches as sub-headlines, along with all contextual metadata,
 under their respectively matching expression headlines.
 
 * (literal ";;") (WORD as status to lowercase) ("/" suffixed words as project) (contextual paragraph as task) (":" prefixed words as tags) ("-" prefixed words as contexts)
