@@ -156,4 +156,4 @@ See the [Metalanguage Specification](./metarosetta.org#language-specification) s
 ## Acknowledgements
 
 - The Free Software Foundation and all the contributors to Emacs and its included packages, especially `eieio` and `org`
-- @ndwarshuis, the author of [org-ml](https://github.com/ndwarshuis/org-ml)
+- [@ndwarshuis](https://github.com/ndwarshuis), the author of [org-ml](https://github.com/ndwarshuis/org-ml)
