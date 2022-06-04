@@ -59,6 +59,12 @@ At the moment of writing, Metarosetta isn't **yet** published on a public archiv
 
 However, by using the superb [straight.el package](https://github.com/radian-software/straight.el#the-recipe-format), it's still super simple to install the package directly from the git repo.
 
+``` emacs-lisp
+(straight-use-package '(metarosetta :type git
+                                    :host github
+                                    :repo "73D1/metarosetta"))
+```
+
 In cases of Doom users, it's even simpler, but still utilizing `straight`. Just add the following to your `.doom.d/packages.el`:
 
 ``` emacs-lisp
